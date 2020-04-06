@@ -1,0 +1,15 @@
+##fileformat=VCFv4.2
+##FORMAT=<ID=CN,Number=1,Type=Integer,Description="Segment most-likely copy-number call">
+##FORMAT=<ID=GT,Number=1,Type=Integer,Description="Segment genotype">
+##FORMAT=<ID=NP,Number=1,Type=Integer,Description="Number of points (i.e. targets or bins) in the segment">
+##FORMAT=<ID=QA,Number=1,Type=Integer,Description="Complementary Phred-scaled probability that all points (i.e. targets or bins) in the segment agree with the segment copy-number call">
+##FORMAT=<ID=QS,Number=1,Type=Integer,Description="Complementary Phred-scaled probability that at least one point (i.e. target or bin) in the segment agrees with the segment copy-number call">
+##FORMAT=<ID=QSE,Number=1,Type=Integer,Description="Complementary Phred-scaled probability that the segment end position is a genuine copy-number changepoint">
+##FORMAT=<ID=QSS,Number=1,Type=Integer,Description="Complementary Phred-scaled probability that the segment start position is a genuine copy-number changepoint">
+##INFO=<ID=END,Number=1,Type=Integer,Description="End coordinate of the variant">
+##source=PostprocessGermlineCNVCalls
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE_1
+1	1001	CNV_1_1001_3000	N	<DEL>,<DUP>	.	.	END=3000	GT:CN:NP:QA:QS:QSE:QSS	1:0:2:5:60:13:13
+1	3001	CNV_1_3001_10000	N	<DEL>,<DUP>	.	.	END=10000	GT:CN:NP:QA:QS:QSE:QSS	0:2:4:17:100:10:13
+2	4001	CNV_1_4001_5000	N	<DEL>,<DUP>	.	.	END=5000	GT:CN:NP:QA:QS:QSE:QSS	2:3:1:100:100:100:100
+2	6001	CNV_2_6001_7000	N	<DEL>,<DUP>	.	.	END=7000	GT:CN:NP:QA:QS:QSE:QSS	0:2:1:20:20:20:20
