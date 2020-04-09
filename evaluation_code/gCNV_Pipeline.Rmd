@@ -1,0 +1,619 @@
+---
+title: "gCNV_Pipeline"
+output: html_document
+author: Isaac Wong
+version: 2.7
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+This workflow is an attempt to provide instructions on running gCNV. Please let me know of any isses you run into or any processes you want improved/automated. Please ensure you have downloaded the most recent files from my github: https://github.com/theisaacwong/talkowski/tree/master/gCNV. You should be able to run the pipeline chunk by chunk.Basic GATK is below:
+```{}
+        gatk --java-options "-Xmx${command_mem_mb}m" CollectReadCounts \
+            -I ${cram} \
+            --read-index ${crai} \
+            -L ${intervals_barcode} \
+            --interval-merging-rule OVERLAPPING_ONLY \
+            --reference ${hg38_reference} \
+            --format TSV \
+            -O ${counts_barcode_filename}
+```
+
+
+#Step 0
+Call GATK's CollectReadcounts on bam files to get interval coverage. (https://gatk.broadinstitute.org/hc/en-us/articles/360036729331-CollectReadCounts).Bsst practice is to batch samples into groups of ~400 and run the WDL on each batch separately. 
+
+Here is a WDL to run it: https://portal.firecloud.org/?return=terra#methods/countingMethods/countingCrams/8/wdl
+
+
+To begin, load the required packages and some functions
+```{r}
+library("stringr")
+library("rgl")
+library("factoextra")
+library("tidyverse")
+library("clusterSim")
+library("cluster")
+library("clValid")
+#library("GenomicRanges")
+library("parallel")
+
+
+srt <- function(x){
+  sort(table(x), decreasing = TRUE)
+}
+
+deFragment <- function(tab, bins, extension=0.3){
+    tab$defragged <- FALSE
+    tab$cprotect <- FALSE    
+    gr_tab <- GRanges(paste0(tab$sample, "::::", tab$chr), IRanges(tab$start, tab$end))
+    bs_tab <- toBinSpace(gr_tab, bins, pattern="::::")
+    values(bs_tab) <- tab    
+    wid_bs <- width(bs_tab)
+    bs_tab_ext <- GRanges(seqnames(bs_tab), IRanges(start(bs_tab) - round(wid_bs*extension), end(bs_tab) + round(wid_bs*extension)))
+    values(bs_tab_ext) <- values(bs_tab)    ### Find overlaps now produced by extension
+    ol <- findOverlaps(bs_tab_ext, bs_tab_ext)
+    ol <- ol[-which(queryHits(ol)==subjectHits(ol))]    ### Extract CN of overlaps [If there is overlap introduced by extension]
+    if(length(ol)>0){
+      pairing <- unique(t(apply(cbind(queryHits(ol), subjectHits(ol)), 1, sort)))
+      pairing <- cbind(pairing, bs_tab_ext$CN[pairing[,1]], bs_tab_ext$CN[pairing[,2]])
+      ### Subset to pairs of compatible CN when extended
+      paired <- pairing[pairing[,3]==pairing[,4],, drop=FALSE]        
+      if(dim(paired)[1]>0){
+        ### Create merged-pair with un-extended boundaries
+        bs_paired <- GRanges(seqnames(bs_tab)[as.numeric(paired[,1])], 
+                             IRanges(apply(cbind(start(bs_tab[as.numeric(paired[,1])]), start(bs_tab[as.numeric(paired[,2])])), 1, min),
+                                     apply(cbind(end(bs_tab[as.numeric(paired[,1])]), end(bs_tab[as.numeric(paired[,2])])), 1, max)))
+        bs_paired$CN <- bs_tab_ext$CN[as.numeric(paired[,1])]            ### Check that merged-pair does not bulldoze inconsistent CN calls in the middle
+        ol_bull <- findOverlaps(bs_paired, bs_tab)
+        clobber <- sapply(1:length(bs_paired), function(x){
+          sum(bs_tab$CN[subjectHits(ol_bull)[queryHits(ol_bull)==x]] != bs_paired$CN[x])
+        })
+        protect <- sapply(unique(subjectHits(ol_bull)), function(x){
+          sum(bs_tab$CN[x] != bs_paired$CN[unique(queryHits(ol_bull)[subjectHits(ol_bull)==x])])
+        })
+        ### Annotate for when there was clobber protection
+        tab$cprotect[unique(subjectHits(ol_bull))] <- protect>0            ### Reduce non-bulldozing pairs
+        bs_paired_noclobber <- bs_paired[clobber==0]
+        bs_paired_red <- GenomicRanges::reduce(bs_paired_noclobber)            ### Re-insert call-level information
+        ol_reinsert <- GenomicRanges::findOverlaps(bs_paired_red, bs_tab)
+        replacements <- do.call(rbind, sapply(1:length(bs_paired_red), function(x){
+          vals <- values(bs_tab)[subjectHits(ol_reinsert)[queryHits(ol_reinsert)==x],]
+          vals <- vals[order(vals$start),]
+          vals_new <- vals[1,]
+          vals_new$start <- min(vals$start)
+          vals_new$end <- max(vals$end)
+          vals_new$QA <- round(mean(as.numeric(vals$QA)))
+          vals_new$QS <- max(vals$QS)
+          vals_new$QSS <- vals$QSS[1]
+          vals_new$QSE <- tail(vals$QSE, 1)
+          vals_new$num_exon <- sum(vals$num_exon)
+          vals_new$defragged <- TRUE
+          return(vals_new)
+        }))
+      }
+    }    ### Now return to genomic-coordinate space, and annotate for whether defragged
+    if(length(ol_reinsert)>0){
+      tab_out <- tab[-unique(subjectHits(ol_reinsert)),]
+      tab_out <- rbind(tab_out, replacements)
+      tab_out <- tab_out[order(tab_out$sample, tab_out$chr, tab_out$start),]
+    }
+    return(tab_out)
+}
+
+toBinSpace <- function(gr, bins, pattern="-"){
+    tmp <- GRanges(str_replace(as.character(seqnames(gr)), paste0(".*", pattern), ""), IRanges(start(gr), end(gr)))
+    ol <- findOverlaps(tmp, bins)    
+    info <- matrix(unlist(by(subjectHits(ol), queryHits(ol), function(x) c(min(x), max(x)))), ncol=2, byrow=TRUE)
+    strds <- strand(gr)[unique(queryHits(ol))]
+    out <- GRanges(seqnames(gr)[unique(queryHits(ol))], IRanges(info[,1], info[,2]), strand=strds)
+    values(out) <- values(gr)[unique(queryHits(ol)),]
+    return(out)
+}
+createBins <- function(tab){
+  return(GRanges(tab[,1], IRanges(tab[,2], tab[,3])))
+}
+divideMultiple <- function(svtk){
+    svtk_multi <- svtk[str_detect(svtk$call_name, ","),]
+    splits <- str_split(svtk_multi$call_name, ",")
+    lens <- sapply(splits, length)
+    expanded <- data.frame(name=rep(svtk_multi[,1], times=lens), call_name=unlist(splits))
+    svtk <- svtk[-which(str_detect(svtk$call_name, ",")),]
+    svtk <- rbind(svtk, expanded)
+    return(svtk)
+}
+
+makeFiles <- function(name, cohort, mat, gbucket){
+    output_name <- paste0(cohort, "-", name, ".txt")
+    colind <- which(colnames(mat)==name)
+    tmp <- mat[,colind]
+    tmp <- str_replace_all(tmp, '\"', "")
+    files <- unlist(str_split(str_replace_all(tmp, "(\\[)|]", ""), ","))
+    write.table(files, quote=FALSE, sep="\t", col.names=F, row.names=F, file=paste0("~/downloads/", output_name))
+    system2("gsutil", paste0("cp ~/downloads/", output_name, " ", gbucket, output_name))
+    #file.remove(paste0("~/downloads/", output_name))
+}
+```
+
+#Step 1
+Manally download the sample_set_entity.tsv file from firecloud. Set the wd (working directory) and jar_path variables to point to the working directory and the gCNV_helper.jar file. Best practices for directory structure:
+  
+  - Each time you download the zip file containing sample_set_entity.tsv and sample_set_membership.tsv, extract the zip file into a labeled directory, then change the wd to that directory. This will help with version control, file naming scheme, and pipeline reproducabiliy. In the eventuallity that you need to redo a step or trace previous steps, this is very helpful. 
+  -You wil eventuly need to download the manifest file mulitple times and will end up having different manifest files with the same name. Here is what my project directory looks like
+        gCNV_project_name/
+        |-- sample_set_entity_barcode_2020_01_01/
+        |   |-- countCramGrp_1/
+        |   |   |-- sample_0001.barcode.counts.tsv
+        |   |   |-- sample_0002.barcode.counts.tsv ...
+        |   |-- countCramGrp_2/
+        |   |   |-- sample_0501.barcode.counts.tsv
+        |   |   |-- sample_0502.barcode.counts.tsv ...
+        |   |-- countCramGrp_3/ ...
+        |   |-- sample_set_entity.tsv
+        |   |-- sample_set_membership.tsv
+        |   |-- pca.rda
+        |   |-- counts_matrix.tsv
+        |
+        |-- sample_set_entity_dataMunging_2020_01_07/
+        |   |-- sample_set_entity.tsv
+        |   |-- sample_set_membership.tsv
+        |   |-- new_labels.tsv
+        |
+        |-- sample_set_entity_clustering_2020_01_14/
+        |   |-- cluster_1_1_CASE/
+        |   |   |-- cluster_1_1_CASE.java.bed
+        |   |   |-- genotyped-segments-sample_0001.vcf
+        |   |   |-- genotyped-segments-sample_0001.vcf.gz
+        |   |   |-- genotyped-segments-sample_0002.vcf
+        |   |   |-- genotyped-segments-sample_0002.vcf.gz ...
+        |   |-- cluster_1_1_COHORT/
+        |   |   |-- cluster_1_1_COHORT.java.bed
+        |   |   |-- genotyped-segments-sample_0501.vcf
+        |   |   |-- genotyped-segments-sample_0501.vcf.gz
+        |   |   |-- genotyped-segments-sample_0502.vcf
+        |   |   |-- genotyped-segments-sample_0502.vcf.gz ...
+        |   |-- cluster_1_2_CASE/ ...
+        |   |-- sample_set_entity.tsv
+        |   |-- sample_set_membership.tsv
+        |   |-- clustered.bed
+        |   |-- gcnv_defragged.tsv
+        |   |-- svtk_input.tsv
+        |   |-- svtk_output.tsv
+        |   |-- out.rda
+        |   |-- final_callset_2020_01_14.tsv
+        |
+        |-- Plots
+            |-- QC_plot_01.pdf
+            |-- QC_plot_02.pdf
+            |-- QC_plot_03.pdf
+        
+```{r}
+wd <- "/path/to/folder/"
+jar_path <- "/path/to/jar"
+system2("java", sprintf("-Xmx16G -jar %s --help", jar_path)) # you might need to change -Xmx to how much memory you have available on your device
+```
+
+#Step 2
+Download the barcode counts files to the wd. If the column name in your manifest file isn't "counts_barcode" then change code. This chunk just makes a system call to run the jar, which itself makes a system call to gsutil to download the files. It's turtles all the way down. 
+```{r}
+wd <- "/path/to/folder/"
+system2("java", sprintf("-Xmx16G -jar %s getBarcodeCounts %ssample_set_entity.tsv %s counts_barcode", jar_path, wd, wd ))
+```
+
+#Step 3
+Convert the barcode count files into a matrix file where rows are samples and columns are intervals
+```{r}
+wd <- "/path/to/folder/"
+system2("java", sprintf("-Xmx16G -jar %s getCountsMatrix %s %scounts_matrix.tsv .barcode.counts.tsv", jar_path, wd, wd ))
+```
+
+#Step 4
+- perform data normalization
+- remove x and y chromosomes
+- perform PCA
+- save the R PCA object
+a scree plot for the PCA loadings is generated to help visualize the data. 
+```{r}
+wd <- "/path/to/folder/"
+counts_df <- read.table(paste0(wd, "counts_matrix.tsv"), sep="\t", stringsAsFactors = FALSE, header=TRUE, fill=TRUE)
+
+counts_df[is.na(counts_df)] <- 0
+counts_matrix <- t(as.matrix(counts_df))
+indexes_to_remove <- rep(FALSE, nrow(counts_matrix))
+rown <- rownames(counts_matrix)
+chr <- do.call(rbind, str_split(rown, "_"))[,1]
+bool_y <- chr == "X" | chr == "chrX" | chr == "ChrX"
+bool_x <- chr == "Y" | chr == "chrY" | chr == "ChrY"
+indexes_to_remove[bool_y | bool_x] <- TRUE
+mydata_filtered <- counts_matrix[!indexes_to_remove,]
+mydataNormalized <- t(t(mydata_filtered)/colSums(mydata_filtered, na.rm = TRUE))
+
+pca <- prcomp(t(mydataNormalized), rank = 7)
+fviz_eig(pca)
+plot3d(pca$x[,c(1,2,3)])
+save(pca, file=paste0(wd, "pca.rda"))
+x <- pca$x
+save(x, file=paste0(wd, "x.rda"))
+```
+
+#Step 5
+- Pseudo-automate clustering. 
+This step uses unsupervised clustering and metrics, so manual curration of final clustering is highly recomended. Typically, the best choice is among the top four recommended options. I am currently using only hclust. From previous experiences, it tends to work the best on average. Density based methods are currently in development. The rval data frame will store the results of each clustering metric. The final column is a ranking of all the metrics. By default, the first choice is chosen for clustering. However, you should manually check the data frame to see if any other combination has similar rankings in metrics to the top choice. The top choice is not necessarily the best. Change the 'n_clusters' variable based on the number of clusters you want. 
+```{r}
+wd <- "~/workspaces/gCNVpipeline/"
+load(paste0(wd, "x.rda"))
+
+pca_loadings <- x
+n_clusters <- 8
+hclust_methods <- c("ward.D", "ward.D2", "single", "complete", "average", "mcquitty", "median", "centroid") 
+distance_methods <- c("euclidean", "maximum", "canberra", "minkowski")
+mink_p <- c(10)
+results <- expand.grid(hclust_methods, distance_methods)
+colnames(results) <- c("agglomeration", "distance")
+results$db <- 0
+results$silhouette <- 0
+results$dunn <- 0
+for(i in 1:nrow(results)){
+  print(i)
+  dist_mat <- dist(pca_loadings[,1:5], method=results$distance[i], p=ifelse(results$distance[i]=="minkowski", mink_p, 2)) 
+  hclust <- hclust(dist_mat, method=results$agglomeration[i]) 
+  cut_avg <- cutree(hclust, k=n_clusters)
+  
+  results$db[i] <- index.DB(pca_loadings[,1:3], cut_avg, centrotypes="centroids", p=3)$DB
+  results$silhouette[i] <- mean(silhouette(cut_avg, dist_mat)[,3])
+  results$dunn[i] <- dunn(dist_mat, cut_avg)
+}
+
+results <- results[order(results$silhouette, decreasing = TRUE),]
+rval <- results
+rval$db <- order(results$db, decreasing = FALSE)
+rval$dunn <- order(results$dunn, decreasing = TRUE)
+rval$silhouette <- order(results$silhouette, decreasing = TRUE)
+rval$sum <- rval$db + rval$dunn + rval$silhouette
+rval <- rval[order(rval$sum),]
+write.table(rval , paste0(wd, "clustering_metrics", n_clusters, ".tsv"), sep="\t", quote = FALSE, col.names = TRUE, row.names = FALSE)
+```
+
+#Step 6
+Plot the clustering output. Change the 'choice' variable from 1 to 33 to cycle through the different clustering methods. (lower is "better")
+```{r}
+n <- n_clusters
+choice <- 3
+dist_mat <- dist(x[,1:3], method=rval$distance[choice]) 
+hclust <- hclust(dist_mat, method=rval$agglomeration[choice]) 
+cut_avg <- cutree(hclust, k=n)
+sorted_clusters <- sapply(unname(cut_avg), function(x) which(x == names(sort(cut_avg))))
+cols <- rainbow(n)[sample(1:n, n)]
+plot3d(x[,1:3], col=cols[cut_avg])
+```
+
+#Step 7
+Save a 3d animation of the plot
+3d rotate
+```{r}
+open3d()
+plot3d(x[,1:3], col=cols[sorted_clusters])
+if (!rgl.useNULL())
+  play3d(spin3d(axis = c(1, 1, 1), rpm = 4), duration = 15, )
+  movie3d( spin3d(rpm=3), duration=20,dir="C:/test/movie", clean=FALSE )
+```
+
+#Step 8
+Refine cluster labels. This step is intended for those wishing to run only cohort mode. Because cohort mode prefers clusters of size ~200 to build a model, this step will separate clusters into subclusters if the main cluster is too large. For example, if cluster_1 is has 800 samples, it will be split into cluster_1_1, cluster_1_2, cluster_1_3, and cluster_1_4, each with approximately 200 members. 
+```{r}
+set.seed(123)
+clusters <- paste0("cluster_", sorted_clusters)
+
+n_clusters <- length(unique(clusters))
+target_size <- 200
+n_grps <- sapply(floor(table(clusters)/target_size), max, 1)
+
+cluster_labels <- paste0(clusters, "_")
+for(i in 1:n_clusters){
+  n_grps <- max(1, round(table(clusters)[i]/target_size))
+  sub_grps <- sample(1:n_grps, table(clusters)[i], replace=TRUE)
+  target_cluster <- which(clusters == row.names(table(clusters))[i])
+  cluster_labels[target_cluster] <- paste0(cluster_labels[target_cluster], sub_grps)
+}
+
+too_big <- names(table(cluster_labels)[which(table(cluster_labels) > 250)])
+new_cluster_labels <- cluster_labels
+for(i in 1:(length(too_big))){
+  n_replace <- length(which(new_cluster_labels == too_big[i]))
+  which_replace <- which(new_cluster_labels == too_big[i])
+  new_cluster_labels[which_replace][1:200] <- paste0(too_big[i], "_1")
+  new_cluster_labels[which_replace][201:n_replace] <- paste0(too_big[i], "_2")
+}
+```
+
+#Step 9
+If one cluster is exceedingly large, you may want to run pca on it separately and perform further clustering
+```{r}
+# get the biggest cluster # n_clusters <- 25
+big_cluster <- names(srt(clusters)[1])
+big_cluster_sample_names <- row.names(x)[clusters %in% big_cluster]
+second_pca_samples <- mydata_filtered[,colnames(mydata_filtered) %in% big_cluster_sample_names]
+mydataNormalized_2nd <- t(t(second_pca_samples)/colSums(second_pca_samples, na.rm = TRUE))
+
+pca_2 <- prcomp(t(mydataNormalized_2nd), rank = 7)
+fviz_eig(pca_2)
+plot3d(pca_2$x[,c(1,2,3)])
+save(pca_2, file=paste0(wd, "pca_2.rda"))
+x_2 <- pca_2$x
+save(x_2, file=paste0(wd, "x_2.rda"))
+```
+
+
+#Step 10
+Create CASE and COHORT labels, create a new manifest file. some steps of gCNV may trim characters from the file name or sample name, and will need to be matched up to the correct. "updated_sample_file.tsv" will be the new manifest file. 
+##TODO: automate merging of smaller clusters 
+```{r}
+set.seed(123)
+
+for(i in unique(clusters)){
+  indexes <- which(clusters==i) 
+  cohorts <- sample(indexes, 200, replace = FALSE)
+  cases <- indexes[! indexes %in% cohorts]
+  clusters[cohorts] <- paste0(i, "_COHORT")
+  clusters[cases] <- paste0(i, "_CASE")
+}
+
+df <- data.frame(cluster=clusters, sample=rownames(x))
+write.table(df, paste0(wd, "CASE_COHORT_groups.tsv"), sep="\t", col.names =FALSE, quote=FALSE, row.names = FALSE)
+cols <- rainbow(length(unique(clusters)))
+plot3d(x[,1:3], col=cols[factor(clusters)])
+
+
+# need to re-match the ID's, you may need to change the regex arg of grepl()
+entity <- read.table(paste0(wd, "sample_set_membership.tsv"), sep="\t", header = TRUE, stringsAsFactors = FALSE)
+actual_names <- sapply(df$sample, function(x) entity$sample[grepl(paste0(x, "_"), entity$sample)] )
+table(sapply(actual_names, length) ) # IF THESE ARE NOT ALL '1' YOU HAVE A PROBLEM
+df2 <- data.frame(cluster=clusters, sample=actual_names)
+write.table(df2, paste0(wd, "CASE_COHORT_groups.tsv"), sep="\t", col.names =FALSE, quote=FALSE, row.names = FALSE)
+cols <- rainbow(length(unique(clusters)))
+plot3d(x[,1:3], col=cols[factor(clusters)])
+
+
+# add the path of counts to the samples.tsv file
+samples <- read.table(paste0(wd, "sample.tsv"), sep="\t", header = TRUE, stringsAsFactors = FALSE)
+sample_set_entity <- read.table(paste0(wd, "sample_set_entity.tsv"), sep="\t", header = TRUE, stringsAsFactors = FALSE)
+counts_barcode <- sample_set_entity$counts_barcode
+counts_exons <- sample_set_entity$counts_exons
+samples <- sample_set_entity$sample
+
+counts_barcode_2 <- unlist(lapply(counts_barcode, function(x) str_split(str_replace_all( str_replace_all(x, "\\[|\\]", ""), ",", " "), " " ) ) )
+counts_exons_2 <- unlist(lapply(counts_exons, function(x) str_split(str_replace_all( str_replace_all(x, "\\[|\\]", ""), ",", " "), " " ) ) )
+samples_2 <- unlist(lapply(samples, function(x) str_split(str_replace_all( str_replace_all(x, "\\[|\\]", ""), ",", " "), " " ) ) )
+df3<- read.table(paste0(wd, "sample.tsv"), sep="\t", header = TRUE, stringsAsFactors = FALSE)
+real_samples <- unname(sapply(samples_2, function(x) df3$entity.sample_id[grepl(paste0(x, "_"), df3$entity.sample_id)] ))
+
+df4 <- data.frame(barcode_counts=counts_barcode_2, entity.sample_id=real_samples, exon_counts=counts_exons_2)
+df5 <- merge(df3, df4)
+write.table(df5, paste0(wd, "updated_sample_file.tsv"), sep="\t", quote=FALSE, col.names = TRUE, row.names = FALSE)
+```
+
+#Step 11
+After running cohort mode, ou will need to upload certain reference files so that case mode can use the model built by cohort mode
+```{r}
+wd <- "/path/to/folder/"
+meta <- read.table(paste0(wd, "sample_set_entity.tsv"), sep="\t", header=TRUE, stringsAsFactors = FALSE)
+cohorts <- meta[,1][grepl("COHORT", meta[,1])]  # change to your cohort
+pse_case <- NULL
+gbucket = 'gs://.....' # change to your gbucket
+for(i in 1:length(cohorts)){
+    cohort <- cohorts[i]
+    ind <- which(meta[,1] == cohort)
+    case <- str_replace(cohort, "COHORT_", "CASE_")
+    if(case %in% meta[,1]){
+        message(case)
+        makeFiles("calling_configs", case, meta[ind,], gbucket)
+        makeFiles("denoising_configs", case, meta[ind,], gbucket)
+        makeFiles("gcnvkernel_version", case, meta[ind,], gbucket)
+        makeFiles("gcnv_model_tars", case, meta[ind,], gbucket)
+        makeFiles("sharded_interval_lists", case, meta[ind,], gbucket)    
+        pse_case <- rbind(pse_case, meta[ind,])
+    }
+}
+## Update the PARTICIPANT SET file
+pse_case <- pse_case[, which(colnames(pse_case) %in% c("entity.sample_set_id", "intervals", "filtered_intervals", "contig_ploidy_model_tar"))]
+    pse_case[,1] <- str_replace(pse_case[,1], "COHORT_", "CASE_")    
+    pse_case$file_gcnv_model_tars <- paste0(gbucket, pse_case[,1], "-gcnv_model_tars.txt")
+    pse_case$file_calling_configs <- paste0(gbucket, pse_case[,1], "-calling_configs.txt")
+    pse_case$file_denoising_configs <- paste0(gbucket, pse_case[,1], "-denoising_configs.txt")
+    pse_case$file_gcnvkernel_version <- paste0(gbucket, pse_case[,1], "-gcnvkernel_version.txt")
+    pse_case$file_sharded_interval_lists <- paste0(gbucket, pse_case[,1], "-sharded_interval_lists.txt")        
+        pse_case <- rbind(as.character(colnames(pse_case)), apply(pse_case, 2, as.character))
+        pse_case[1,1] <- "entity:sample_set_id"
+        write.table(pse_case, sep="\t", row.names=F, col.names=F, file=paste0("~/downloads/c_pse.txt"), quote=F)
+```
+
+
+#Step 12
+on Terra/Fireloud, run gCNV. 
+
+#Step 13
+Download the segment VCFs and unzip them. 
+```{r}
+wd <- "/path/to/folder/"
+system2("java", sprintf("-Xmx16G -jar %s downloadSegmentsVCFs %ssample_set_entity.tsv %s genotyped_segments_vcf", jar_path, wd, wd ))
+```
+
+#Step 14
+Convert VCFs to BED format
+```{r}
+system2("java", sprintf("-Xmx16G -jar %s convertVCFsToBEDFormat %s svtk_input.bed genotyped-segments- .vcf", jar_path, wd, wd ))
+```
+
+#Step 15
+Cluster calls together. You will need to install svtk: https://github.com/talkowski-lab/svtk
+```{r}
+system2("svtk", sprintf("bedcluster %ssvtk_input.bed %ssvtk_output.bed", wd, wd))
+```
+
+#Step 16
+Merge the input and output of svtk, as svtk will delete exra metadata fields
+```{r}
+system2("java", sprintf("-Xmx16G -jar %s svtkMatch %ssvtk_input.bed %ssvtk_output.bed %sclustered.bed", jar_path, wd, wd, wd))
+```
+
+#Step 17
+defragment calls. You will need a "References_hg38_gencode_unsplit.bed" file
+```{r}
+gcnv <- read.table(paste0(wd, "clustered.bed"), sep="\t", stringsAsFactors=FALSE, header=FALSE)
+colnames(gcnv) <- c("chr", "start", "end", "name", "svtype", "sample", "call_name", "vaf", "vac", "pre_rmsstd", "post_rmsstd", "CN", "GT", "NP", "QA", "QS", "QSE", "QSS")
+gcnv$batch <- str_extract(gcnv$call_name, "cluster.*[(CASE)|(COHORT)]")
+gcnv$num_exon <- -1 # currently not supported
+out_list <- vector("list", length = length(unique(gcnv$batch)))
+fragment_threshold <- 20
+ext <- .5
+
+intervals <- read.table(paste0(wd, "References_hg38_gencode_unsplit.bed"), comment.char="@")
+bins_tab <- rep(list(intervals), length(unique(gcnv$batch)))
+createBins <- function(tab){return(GRanges(tab[,1], IRanges(tab[,2], tab[,3])))}
+list_bins <- lapply(bins_tab, createBins)
+names(list_bins) <- unique(gcnv$batch)
+
+for(i in 1:length(unique(gcnv$batch))){
+  x <- unique(gcnv$batch)[i]
+  message(x)
+  gcnv_toDefrag <- gcnv[as.numeric(gcnv$QS)>=fragment_threshold & gcnv$batch==x,]
+  gcnv_defrag <- deFragment(gcnv_toDefrag, list_bins[[x]], ext)    
+  gcnv_notDefrag <- gcnv[as.numeric(gcnv$QS)<fragment_threshold & gcnv$batch==x,]
+  gcnv_notDefrag$defragged <- FALSE
+  gcnv_notDefrag$cprotect <- FALSE    
+  gr_df <- GRanges(paste(gcnv_defrag$sample, "::::", gcnv_defrag$chr), IRanges(gcnv_defrag$start, gcnv_defrag$end))
+  gr_ndf <- GRanges(paste(gcnv_notDefrag$sample, "::::", gcnv_notDefrag$chr), IRanges(gcnv_notDefrag$start, gcnv_notDefrag$end))
+  suppressWarnings(ol <- GenomicRanges::findOverlaps(gr_df, gr_ndf)    )
+  gcnv_defrag$mask_defrag <- FALSE
+  gcnv_notDefrag$mask_defrag <- FALSE
+  if(length(ol)>0){gcnv_notDefrag$mask_defrag[unique(subjectHits(ol))] <- TRUE}    
+  out <- rbind(gcnv_defrag, gcnv_notDefrag)
+  out <- out[order(out$sample, out$chr, out$start),]
+  out_list[[i]] <- out
+}
+gcnv_defragged <- do.call(rbind, out_list)
+gcnv_defragged <- gcnv_defragged[gcnv_defragged$mask_defrag==FALSE,]
+gcnv_defragged$id <- 1:dim(gcnv_defragged)[1]
+
+write.table(as(gcnv_defragged, "data.frame"), file = paste0(wd, "gcnv_defragged.tsv"), sep="\t", row.names = TRUE, col.names = TRUE, quote=FALSE)
+```
+
+
+You are now basically done. the next steps are generic filtering and metric steps. 
+
+
+#Step 18 QC and filtering
+```{r}
+gcnv <- read.table(paste0(wd, "gcnv_defragged.tsv"), sep="\t", header=TRUE, stringsAsFactors = FALSE)
+
+threshold_value <- 100
+failed_threshold <- names(which(table(gcnv$sample) > threshold_value))
+thresholded <- gcnv[!(gcnv$sample %in% failed_threshold),]
+
+filtered_dups <- thresholded$svtype == "DUP" & thresholded$QS >= 50
+filtered_dels <- thresholded$svtype == "DEL" & thresholded$QS >= 100
+filtered_vafs <- thresholded$vaf <= 0.01
+filtered <- thresholded[(filtered_dups | filtered_dels) & filtered_vafs ,]
+filtered <- thresholded[filtered_vafs,]
+
+
+df1 <- filtered
+groups<- unique(df1$batch)
+n <- length(groups)
+a <- sapply(1:n, function(x) length(which(as.numeric(table(df1$sample[df1$batch==groups[x]]))>100)))
+
+b <- sapply(1:n, function(x) length
+            (which(as.numeric(
+              table(df1$sample[df1$batch==groups[x] & df1$vaf <= 0.01 & df1$QS >= 100]))>=10)))
+
+c <- sapply(1:n, function(x) length(
+  unique(union(
+    names(which(table(df1$sample[df1$batch==groups[x] & df1$vaf <= 0.01 & df1$QS >= 100])>=10)),
+    names(which(table(df1$sample[df1$batch==groups[x]])>100)   )))))
+
+num_samples <- sapply(1:n, function(x) as.numeric(table(df1$batch)[names(table(df1$batch)) == groups[x]]))
+
+#100% overlap?!?! sanity check
+for(x in 1:n){
+  temp1 <- names(which(table(df1$sample[df1$batch==groups[x] & df1$vaf < 0.01])>10))
+  temp2 <- names(which(table(df1$sample[df1$batch==groups[x]])>100)   )
+  print(all(temp2 %in% temp1))
+}
+
+df <- rbind(a=a, b=b, c=c, num_samples=num_samples)
+colnames(df) <- groups
+df
+
+hist(as.numeric(table(df1$sample[df1$QS >= 100 & df1$vaf <= 0.01])), main="hist of vaf<=0.01, qs>=100 CNVs per sample", xlab="counts", col="grey")
+hist(log10(as.numeric(table(df1$sample[df1$QS >= 100 & df1$vaf <= 0.01]))), main="log10 hist of vaf<=0.01, qs>=100 CNVs per sample", xlab="counts", col="grey")
+
+```
+
+
+```{r}
+qs_window <- c(10, 20, 30, 40, 50)
+total_variants <- rep(0, length(qs_window))
+variant_counts <- vector("list", length(qs_window))
+
+for(i in seq_along(qs_window)){
+  filtered_qs <- gcnv$QS >= qs_window[i]
+  filtered_vafs <- gcnv$vaf <= 0.01
+  filtered <- gcnv[filtered_qs & filtered_vafs ,]
+  total_variants[i] <- length(unique(filtered$name))
+  variant_counts[[i]] <- as.numeric(table(filtered$sample))
+
+}
+
+df <- data.frame(qs_threshold=qs_window, total_variants)
+for(i in seq_along(variant_counts)){
+  hist(variant_counts[[i]], xlab="variants per sample", ylab="frequency", main=paste0("QS: ", qs_window[i]), col="grey", probability = TRUE)
+}
+
+boxplot(variant_counts, names = qs_window, xlab="QS threshold", ylab="variants per sample", outline = FALSE, main="per sample CNVs, CCDG", col="SKYBLUE")
+```
+
+
+```{r}
+gcnv_final <- gcnv
+
+gcnv_final$PASS_QS <- (gcnv_final$svtype=="DUP" & gcnv_final$QS>=50) | (gcnv_final$svtype=="DEL" & gcnv_final$QS>=100) | (gcnv_final$CN==0 & gcnv_final$QS>=400)
+gcnv_final$PASS_freq <- gcnv_final$vaf <= 0.01
+
+lt100_raw_calls <- table(gcnv_final$sample)[which(table(gcnv_final$sample) <= 100)] %>% names
+gcnv_final$PASS_sample <- gcnv_final$sample %in% lt100_raw_calls
+
+
+t1 <- as.numeric(Sys.time())
+# ver A
+variant_calls <- gcnv_final$name %>% unique
+n_cores <- detectCores() - 1
+cl <- makeCluster(n_cores)
+clusterExport(cl=cl, varlist = c("gcnv_final", "variant_calls"))
+list_by_variant_calls <- parLapply(cl, seq_along(variant_calls), function(x) {
+ df1 <- gcnv_final[gcnv_final$name==variant_calls[x], ]
+ df1$medQS <- median(df1$QS, na.rm=TRUE)
+ return(df1)
+})
+stopCluster(cl)
+t2 <- as.numeric(Sys.time())
+
+df_c <- do.call(rbind, list_by_variant_calls)
+df_c$PASS_QS_var <- (df_c$svtype=="DUP" & df_c$medQS>=50) | (df_c$svtype=="DEL" & df_c$medQS>=100 & df_c$CN != 0) | (df_c$CN==0 & df_c$medQS>=400)
+
+df_d <- df_c
+df_d$site_frequency <- df_d$vaf
+df_d$call_name <- NULL
+df_d$vac <- NULL
+df_d$vaf <- NULL
+df_d$pre_rmsstd <- NULL
+df_d$post_rmsstd <- NULL
+df_d$num_exon <- NULL
+df_d$cprotect <- NULL
+df_d$mask_defrag <- NULL
+df_d$id <- NULL
+
+
+write.table(df_d, paste0(wd, "final_callset.tsv"), sep="\t", quote=FALSE, row.names = FALSE)
+```
