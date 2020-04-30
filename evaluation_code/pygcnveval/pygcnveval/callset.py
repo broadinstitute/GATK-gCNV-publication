@@ -2,6 +2,9 @@ import pyranges as pr
 from typing import FrozenSet, List
 import vcf
 import pandas as pd
+import shutil
+import gzip
+
 
 from event import EventType, Event
 from interval_collection import IntervalCollection
@@ -82,6 +85,18 @@ class GCNVCallset:
     def read_in_callset(cls, **kwargs):
         assert "gcnv_segment_vcfs" in kwargs
         gcnv_segment_vcfs = kwargs["gcnv_segment_vcfs"]
+
+        # Handle gzip-ed VCF gcnv files
+        new_gcnv_vcfs_list = []
+        for vcf_file in gcnv_segment_vcfs:
+            if vcf_file.endswith(".gz"):
+                new_vcf_file = vcf_file[:-3]
+                with open(new_vcf_file, 'wt') as f_out, gzip.open(vcf_file, 'rt') as f_in:
+                    shutil.copyfileobj(f_in, f_out)
+                    vcf_file = new_vcf_file
+            new_gcnv_vcfs_list.append(vcf_file)
+        gcnv_segment_vcfs = new_gcnv_vcfs_list
+
         sample_to_pyrange_map = {}
         for vcf_file in gcnv_segment_vcfs:
             vcf_reader = vcf.Reader(open(vcf_file, 'r'))
