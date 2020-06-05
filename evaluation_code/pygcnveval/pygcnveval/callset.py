@@ -87,7 +87,6 @@ class Callset:
             non_overlapping_intervals = interval_collection_with_refs.subtract(overlapping_intervals_genotypes)
             overlapping_intervals_genotypes = overlapping_intervals_genotypes.drop(like="NumBins")
             joined_genotypes = pr.PyRanges(overlapping_intervals_genotypes.df.append(non_overlapping_intervals.df, ignore_index=True)).sort()
-            #print(joined_genotypes.df)
             sample_by_interval_genotype_matrix[index] = joined_genotypes.df["Genotype"].map(lambda e: e.value).values
             intervals_by_sample_quality_matrix[index] = joined_genotypes.df["Quality"].values
 
@@ -147,16 +146,21 @@ class TruthCallset(Callset):
     @staticmethod
     def _construct_sample_to_pyrange_map(truth_callset_pyrange: pr.PyRanges, sample_set: FrozenSet):
         sample_to_pyrange_map = {}
+        sample_to_events_list_map = {}
         for sample in sample_set:
-            events_df = pd.DataFrame(columns=Callset.CALLSET_COLUMNS)
-            for k, df in truth_callset_pyrange:
-                for index, truth_event in df.iterrows():
-                    if sample in truth_event['Samples']:
-                        event = (truth_event['Chromosome'], truth_event['Start'], truth_event['End'],
-                                 truth_event['Genotype'], truth_event['NumBins'], 0)
-                        events_df.loc[len(events_df)] = event
-                events_df = events_df.astype(Callset.CALLSET_COLUMN_TYPES)
-                sample_to_pyrange_map[sample] = pr.PyRanges(events_df)
+            sample_to_events_list_map[sample] = []
+        for k, df in truth_callset_pyrange:
+            for index, truth_event in df.iterrows():
+                for sample in truth_event['Samples']:
+                    if sample in sample_set:
+                        event = {'Chromosome': truth_event['Chromosome'], 'Start': truth_event['Start'], "End": truth_event['End'],
+                                 "Genotype": truth_event['Genotype'], "NumBins": truth_event['NumBins'], "Quality": 0}
+                        sample_to_events_list_map[sample].append(event)
+
+        for sample in sample_set:
+            events_df = pd.DataFrame(sample_to_events_list_map[sample])
+            events_df = events_df.astype(Callset.CALLSET_COLUMN_TYPES)
+            sample_to_pyrange_map[sample] = pr.PyRanges(events_df)
         return sample_to_pyrange_map
 
     def filter_out_uncovered_events(self, interval_collection: IntervalCollection,

@@ -82,7 +82,7 @@ def test_sample_by_interval_matrix():
     truth_callset = TruthCallset.read_in_callset(truth_callset_bed_file=TRUTH_CALLSET_TEST_BED,
                                                  interval_collection=interval_collection,
                                                  samples_to_keep=SAMPLES_TO_KEEP)
-    callset_matrix_view_actual = truth_callset.get_callset_matrix_view(interval_collection)
+    callset_matrix_view_actual = truth_callset.get_callset_matrix_view(interval_collection, list(truth_callset.sample_set))
     assert callset_matrix_view_actual == TRUTH_CALLSET_CALLSET_MATRIX_VIEW_EXPECTED
 
 

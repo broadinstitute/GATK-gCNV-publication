@@ -60,7 +60,7 @@ def test_bin_evaluator():
 
 
 def main():
-    test_event_evaluator()
+    #test_event_evaluator()
     test_bin_evaluator()
 
 
