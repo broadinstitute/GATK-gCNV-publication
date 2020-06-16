@@ -3,21 +3,27 @@ from typing import List
 
 from callset import TruthCallset, GCNVCallset
 from interval_collection import IntervalCollection
-from evaluator import PerEventEvaluator
+from evaluator import PerEventEvaluator, PerBinEvaluator
 import plotting
 
 
 def evaluate_cnv_callsets_and_plot_results(analyzed_intervals: str, truth_callset_bed: str, gcnv_vcfs: List[str],
                                            output_directory: str):
     interval_collection = IntervalCollection.read_interval_list(analyzed_intervals)
-    truth_callset = TruthCallset.read_in_callset(truth_callset_bed=truth_callset_bed,
-                                                 interval_collection=interval_collection)
-    truth_callset.filter_out_uncovered_events(interval_collection)
     gcnv_callset = GCNVCallset.read_in_callset(gcnv_segment_vcfs=gcnv_vcfs)
-    evaluator = PerEventEvaluator(truth_callset=truth_callset)
-    evaluation_result = evaluator.evaluate_callset_against_the_truth(gcnv_callset=gcnv_callset)
+    truth_callset = TruthCallset.read_in_callset(truth_callset_bed_file=truth_callset_bed,
+                                                 interval_collection=interval_collection,
+                                                 samples_to_keep=gcnv_callset.sample_set)
+    truth_callset.filter_out_uncovered_events(interval_collection)
 
-    plotting.plot_and_save_precision_recall_per_bin_graphs(evaluation_result, output_directory)
+    per_event_evaluator = PerEventEvaluator(truth_callset=truth_callset)
+    per_event_evaluation_result = per_event_evaluator.evaluate_callset_against_the_truth(gcnv_callset=gcnv_callset)
+    plotting.plot_and_save_per_event_evaluation_results(per_event_evaluation_result, output_directory)
+
+    per_bin_evaluator = PerBinEvaluator(truth_callset=truth_callset, interval_collection=interval_collection)
+    # TODO pass an optional number of PR points parameter
+    per_bin_evaluation_result = per_bin_evaluator.evaluate_callset_against_the_truth(gcnv_callset)
+    plotting.plot_and_save_per_bin_evaluation_results(per_bin_evaluation_result, output_directory)
 
 
 def main():
@@ -39,8 +45,6 @@ def main():
 
     args = parser.parse_args()
     output_dir = args.output_dir
-    # truth_calls_file = args.truth_calls
-    # padded_interval_file = args.padded_intervals
     gcnv_segment_vcfs = args.gcnv_segment_vcfs
     truth_callset = args.sorted_truth_calls_bed
     analyzed_intervals = args.analyzed_intervals

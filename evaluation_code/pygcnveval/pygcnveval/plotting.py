@@ -1,12 +1,15 @@
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import pandas as pd
 import os
 import numpy as np
 import math
 
-from evaluation_result import EvaluationResult
+from evaluation_result import PerEventEvaluationResult, PerBinEvaluationResult
 
 
-def plot_and_save_precision_recall_per_bin_graphs(evaluation_result: EvaluationResult, output_directory: str):
+def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvaluationResult, output_directory: str):
     bins = evaluation_result.event_size_bins
 
     # Plot precision
@@ -32,6 +35,18 @@ def plot_and_save_precision_recall_per_bin_graphs(evaluation_result: EvaluationR
     plt.xlim(bins[0], bins[-1])
     plt.ylim(0, 1.)
     plt.savefig(os.path.join(output_directory, "recall.png"))
+    plt.close()
+
+
+def plot_and_save_per_bin_evaluation_results(evaluation_result: PerBinEvaluationResult, output_directory: str):
+    plt.plot(evaluation_result.get_recall_array(), evaluation_result.get_precision_array(), 'o')
+    plt.title("Precision stratified by exon number")
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.xlim(-0.1, 1.1)
+    plt.ylim(-0.1, 1.1)
+    plt.savefig(os.path.join(output_directory, "precision_recall_curve.png"))
+    plt.close()
 
 
 def plot_number_of_events_distribution(output_file: str, gcnv_segment_vcfs: list):
