@@ -21,8 +21,8 @@ class CallsetMatrixView:
     def __init__(self, sample_list: List, intervals_by_sample_call_matrix: np.ndarray,
                  intervals_by_sample_quality_matrix: np.ndarray):
         self.sample_list = sample_list
-        self.intervals_by_sample_call_matrix = intervals_by_sample_call_matrix
-        self.intervals_by_sample_quality_matrix = intervals_by_sample_quality_matrix
+        self.samples_by_intervals_call_matrix = intervals_by_sample_call_matrix
+        self.samples_by_intervals_quality_matrix = intervals_by_sample_quality_matrix
 
     def __eq__(self, other):
         if not isinstance(other, CallsetMatrixView):
@@ -33,8 +33,8 @@ class CallsetMatrixView:
         for sample in self.sample_list:
             index_self = self.sample_list.index(sample)
             index_other = other.sample_list.index(sample)
-            if (self.intervals_by_sample_call_matrix[index_self] != other.intervals_by_sample_call_matrix[index_other]).all() \
-                    or (self.intervals_by_sample_quality_matrix[index_self] != other.intervals_by_sample_quality_matrix[index_other]).all():
+            if (self.samples_by_intervals_call_matrix[index_self] != other.samples_by_intervals_call_matrix[index_other]).all() \
+                    or (self.samples_by_intervals_quality_matrix[index_self] != other.samples_by_intervals_quality_matrix[index_other]).all():
                 return False
 
         return True
@@ -77,20 +77,27 @@ class Callset:
         :return: CallsetMatrixView containing event by interval matrix
         """
         sample_by_interval_genotype_matrix = np.zeros((len(self.sample_set), len(interval_collection)), dtype=np.uint8)
-        intervals_by_sample_quality_matrix = np.zeros((len(self.sample_set), len(interval_collection)), dtype=np.uint16)
+        sample_by_interval_quality_matrix = np.zeros((len(self.sample_set), len(interval_collection)), dtype=np.uint16)
+        reciprocal_overlaps_matrix = np.zeros((len(self.sample_set), len(interval_collection)))
 
-        for index, sample in enumerate(sample_list):
-            overlapping_intervals_genotypes = self.sample_to_pyrange_map[sample].intersect(interval_collection.pyrange)
-            interval_collection_with_refs = interval_collection.pyrange.copy()\
-                .assign("Genotype", lambda df: pd.Series([EventType.REF]).repeat(len(df)))\
-                .assign("Quality", lambda df: pd.Series([0]).repeat(len(df)))
-            non_overlapping_intervals = interval_collection_with_refs.subtract(overlapping_intervals_genotypes)
-            overlapping_intervals_genotypes = overlapping_intervals_genotypes.drop(like="NumBins")
-            joined_genotypes = pr.PyRanges(overlapping_intervals_genotypes.df.append(non_overlapping_intervals.df, ignore_index=True)).sort()
-            sample_by_interval_genotype_matrix[index] = joined_genotypes.df["Genotype"].map(lambda e: e.value).values
-            intervals_by_sample_quality_matrix[index] = joined_genotypes.df["Quality"].values
+        indexed_interval_collection_pyrange = interval_collection.pyrange.insert(pd.Series(
+            data=interval_collection.pyrange.df.index.tolist(), name="Index"))
+        for i, sample in enumerate(sample_list):
+            for k, df in self.sample_to_pyrange_map[sample]:
+                for index, event in df.iterrows():
+                    event_interval = Interval(event["Chromosome"], event["Start"], event["End"])
+                    intersecting_intervals = indexed_interval_collection_pyrange[event_interval.chrom, event_interval.start:event_interval.end]
 
-        return CallsetMatrixView(sample_list, sample_by_interval_genotype_matrix, intervals_by_sample_quality_matrix)
+                    df_ = intersecting_intervals.df
+                    if not df_.empty:
+                        df_["Overlap"] = Interval.calculate_reciprocal_overlap(df_["Start"], df_["End"], event_interval.start, event_interval.end)
+                        indices = df_["Index"][df_["Overlap"] > reciprocal_overlaps_matrix[i][df_["Index"]]].tolist()
+                        reciprocal_overlaps_matrix[i][indices] = df_["Overlap"][df_["Index"].isin(indices)]
+
+                        sample_by_interval_genotype_matrix[i, indices] = event["Genotype"].value
+                        sample_by_interval_quality_matrix[i, indices] = event["Quality"]
+
+        return CallsetMatrixView(sample_list, sample_by_interval_genotype_matrix, sample_by_interval_quality_matrix)
 
     def get_overlapping_events_for_sample(self, interval: Interval, sample: str) -> List[Event]:
         """
@@ -143,6 +150,40 @@ class TruthCallset(Callset):
 
         return cls(truth_callset_pyrange, sample_to_pyrange_map)
 
+    # def get_callset_matrix_view(self, interval_collection: IntervalCollection, sample_list: List[str]) -> CallsetMatrixView:
+    #     """
+    #     We override superclass's method to boost performance, taking advantage of monolithic `truth_callset_pyrange`
+    #     """
+    #     def get_genotype_array_from_intersecting_events(interval_: Interval, samples_to_index_: dict,
+    #                                                     intersecting_events_: pr.PyRanges):
+    #         genotype_array = np.zeros(len(samples_to_index))
+    #         reciprocal_overlap_array = np.zeros(len(samples_to_index))
+    #         if intersecting_events_.empty:
+    #             return genotype_array
+    #         for k_, df_ in intersecting_events_:
+    #             for index_, row_ in df_.iterrows():
+    #                 ro = interval_.get_reciprocal_overlap(Interval(row_["Chromosome"], row_["Start"], row_["End"]))
+    #                 for sample in row_["Samples"]:
+    #                     if ro >= reciprocal_overlap_array[samples_to_index_[sample]]:
+    #                         genotype_array[samples_to_index_[sample]] = row_["Genotype"].value
+    #                         reciprocal_overlap_array[samples_to_index_[sample]] = ro
+    #         return genotype_array
+    #
+    #     samples_to_index = {sample_list[i]: i for i in range(len(sample_list))}
+    #     sample_by_interval_genotype_matrix = np.zeros((len(self.sample_set), len(interval_collection)), dtype=np.uint8)
+    #     intervals_by_sample_quality_matrix = np.zeros((len(self.sample_set), len(interval_collection)), dtype=np.uint16)
+    #     i = 0
+    #     for k, df in interval_collection.pyrange:
+    #         for index, row in df.iterrows():
+    #             interval = Interval(row["Chromosome"], row["Start"], row["End"])
+    #             intersecting_events = self.truth_callset_pyrange[interval.chrom, interval.start:interval.end]
+    #             sample_by_interval_genotype_matrix[:, i] = get_genotype_array_from_intersecting_events(interval,
+    #                                                                                                    samples_to_index,
+    #                                                                                                    intersecting_events)
+    #             i += 1
+    #
+    #     return CallsetMatrixView(sample_list, sample_by_interval_genotype_matrix, intervals_by_sample_quality_matrix)
+
     @staticmethod
     def _construct_sample_to_pyrange_map(truth_callset_pyrange: pr.PyRanges, sample_set: FrozenSet):
         sample_to_pyrange_map = {}
@@ -164,16 +205,31 @@ class TruthCallset(Callset):
         return sample_to_pyrange_map
 
     def filter_out_uncovered_events(self, interval_collection: IntervalCollection,
-                                    overall_reciprocal_overlap: float = 0.3):
+                                    min_overlap_fraction: float = 0.3):
         truth_callset_with_coverage = self.truth_callset_pyrange.coverage(interval_collection.pyrange)
-        indices = truth_callset_with_coverage.df['FractionOverlaps'] > overall_reciprocal_overlap
+        indices = truth_callset_with_coverage.df['FractionOverlaps'] > min_overlap_fraction
         self.truth_callset_pyrange = truth_callset_with_coverage[indices].drop(['NumberOverlaps', 'FractionOverlaps'])
         self.filtered_out_events = truth_callset_with_coverage[~indices].drop(['NumberOverlaps', 'FractionOverlaps'])
         self.sample_to_pyrange_map = TruthCallset._construct_sample_to_pyrange_map(self.truth_callset_pyrange, self.sample_set)
 
-    def get_multiallelic_regions(self) -> IntervalCollection:
-        # TODO implement
-        pass
+    def subset_intervals_to_rare_regions(self, intervals: IntervalCollection, max_allelic_fraction: float) -> IntervalCollection:
+        """
+        Subset a given interval collection to those intervals who only overlap with rare events, as defined by
+        max_allele_fraction
+
+        :param intervals: interval collection to subset
+        :param max_allelic_fraction: events below that threshold are considered rare
+        :return: subset of rare intervals
+        """
+        # TODO Handle the case of an interval from collection overlapping multiple events. In that case we should only consider
+        # allelic fraction of the event with the largest reciprocal overlap
+        intervals_pr = intervals.pyrange
+        overlaps = self.truth_callset_pyrange.intersect(intervals_pr)
+        joined_pr = intervals_pr.join(overlaps, how="left")
+        rare_intervals_pr = joined_pr.subset(lambda df: df["Frequency"] <= max_allelic_fraction)
+        rare_intervals_pr = rare_intervals_pr.merge()
+        rare_intervals_pr = pr.PyRanges(rare_intervals_pr.df)  # This is to resolve a dtypes issue
+        return IntervalCollection(rare_intervals_pr)
 
 
 class GCNVCallset(Callset):

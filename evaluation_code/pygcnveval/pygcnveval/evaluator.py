@@ -45,24 +45,34 @@ class PerBinEvaluator:
         self.interval_collection = interval_collection
 
     def evaluate_callset_against_the_truth(self, gcnv_callset: GCNVCallset, number_quality_thresholds: int = 30):
-        truth_matrix_view = self.truth_callset.get_callset_matrix_view(self.interval_collection, list(gcnv_callset.sample_set))
-        gcnv_matrix_view = gcnv_callset.get_callset_matrix_view(self.interval_collection, list(gcnv_callset.sample_set))
-        truth_callset_matrix = truth_matrix_view.intervals_by_sample_call_matrix
-        gcnv_callset_matrix = gcnv_matrix_view.intervals_by_sample_call_matrix
-        gcnv_quality_matrix = gcnv_matrix_view.intervals_by_sample_quality_matrix
-        evaluation_result = PerBinEvaluationResult(gcnv_matrix_view.intervals_by_sample_quality_matrix,
+        print("Creating interval by sample genotype matrix for truth callset...", flush=True)
+        sample_list = list(gcnv_callset.sample_set)
+        truth_matrix_view = self.truth_callset.get_callset_matrix_view(self.interval_collection, sample_list)
+        print("Creating interval by sample genotype matrix for gCNV callset...", flush=True)
+        gcnv_matrix_view = gcnv_callset.get_callset_matrix_view(self.interval_collection, sample_list)
+        truth_callset_matrix = truth_matrix_view.samples_by_intervals_call_matrix
+        gcnv_callset_matrix = gcnv_matrix_view.samples_by_intervals_call_matrix
+        gcnv_quality_matrix = gcnv_matrix_view.samples_by_intervals_quality_matrix
+        evaluation_result = PerBinEvaluationResult(gcnv_matrix_view.samples_by_intervals_quality_matrix,
                                                    number_quality_thresholds)
 
         for threshold in evaluation_result.quality_thresholds:
-            true_positives = np.sum(np.logical_and(gcnv_quality_matrix <= threshold,
+            true_positives = np.sum(np.logical_and(gcnv_quality_matrix >= threshold,
                                                    np.logical_and(truth_callset_matrix == gcnv_callset_matrix,
                                                                   gcnv_callset_matrix != EventType.REF.value)))
-            false_positives = np.sum(np.logical_and(gcnv_quality_matrix <= threshold,
+            false_positives = np.sum(np.logical_and(gcnv_quality_matrix >= threshold,
                                                     np.logical_and(truth_callset_matrix != gcnv_callset_matrix,
                                                                    gcnv_callset_matrix != EventType.REF.value)))
-            false_negatives = np.sum(np.logical_and(gcnv_quality_matrix <= threshold,
-                                                    np.logical_and(truth_callset_matrix != gcnv_callset_matrix,
-                                                                   gcnv_callset_matrix == EventType.REF.value)))
+
+            positives = np.sum(truth_callset_matrix != EventType.REF.value)
+
+            # We want to not double count false positives where both calls are non-ref, but disagree as false negatives
+            false_negatives_adjust = np.sum(np.logical_and(gcnv_quality_matrix >= threshold,
+                                                           np.logical_and(truth_callset_matrix != gcnv_callset_matrix,
+                                                                          np.logical_and(truth_callset_matrix != EventType.REF.value,
+                                                                                         gcnv_callset_matrix != EventType.REF.value))))
+
+            false_negatives = (positives - true_positives) - false_negatives_adjust
             evaluation_result.set_values_for_quality_cutoff(threshold, true_positives, false_positives, false_negatives)
 
         return evaluation_result

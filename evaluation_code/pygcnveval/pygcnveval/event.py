@@ -49,6 +49,6 @@ class Event:
         assert self.sample == other.sample
         if self.event_type != other.event_type:
             return False
-        if self.interval.reciprocal_overlap(other.interval) < minimum_reciprocal_overlap:
+        if self.interval.get_reciprocal_overlap(other.interval) < minimum_reciprocal_overlap:
             return False
         return True
