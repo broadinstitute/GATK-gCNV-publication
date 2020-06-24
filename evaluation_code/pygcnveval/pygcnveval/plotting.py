@@ -40,7 +40,7 @@ def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvalua
 
 def plot_and_save_per_bin_evaluation_results(evaluation_result: PerBinEvaluationResult, output_directory: str):
     plt.plot(evaluation_result.get_recall_array(), evaluation_result.get_precision_array(), 'o')
-    plt.title("Precision stratified by exon number")
+    plt.title("Precision-Recall curve")
     plt.xlabel("Recall")
     plt.ylabel("Precision")
     plt.xlim(-0.1, 1.1)

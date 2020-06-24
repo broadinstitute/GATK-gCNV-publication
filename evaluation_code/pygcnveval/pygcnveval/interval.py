@@ -1,3 +1,6 @@
+import numpy as np
+
+
 class Interval:
     """Stores a Genomic interval"""
 
@@ -17,7 +20,7 @@ class Interval:
     def to_interval_file_string(self):
         return self.__str__() + "\t+\t."
 
-    def reciprocal_overlap(self, other):
+    def get_reciprocal_overlap(self, other):
         """
         Calculate reciprocal overlap of two intervals
         :param other: interval to calculate overlap with
@@ -25,8 +28,12 @@ class Interval:
         """
         if not self.intersects_with(other):
             return 0.
-        overlap = min(self.end, other.end) - max(self.start, other.start)
-        return min(overlap / self.length, overlap / other.length)
+        return Interval.calculate_reciprocal_overlap(self.start, self.end, other.start, other.end)
+
+    @staticmethod
+    def calculate_reciprocal_overlap(start_0, end_0, start_1, end_1):
+        overlap = np.minimum(end_0, end_1) - np.maximum(start_0, start_1)
+        return np.minimum(overlap / (end_0 - start_0 + 1), overlap / (end_1 - start_1 + 1))
 
     def __str__(self):
         return self.chrom + "\t" + str(self.start) + "\t" + str(self.end)

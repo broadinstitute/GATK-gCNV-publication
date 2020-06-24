@@ -40,6 +40,11 @@ class PerEventEvaluationResult:
 class PerBinEvaluationResult:
 
     def __init__(self, quality_matrix: np.ndarray, number_points):
+        """
+        TODO
+        :param quality_matrix:
+        :param number_points:
+        """
         self.quality_thresholds = sorted(list(set(np.percentile(
             quality_matrix, [(i / number_points) * 100 for i in range(number_points + 1)]))))
         self.true_positives = {q: 0 for q in self.quality_thresholds}
