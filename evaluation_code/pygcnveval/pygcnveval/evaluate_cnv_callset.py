@@ -19,15 +19,24 @@ def evaluate_cnv_callsets_and_plot_results(analyzed_intervals: str, truth_callse
                                                  samples_to_keep=gcnv_callset.sample_set)
     print("Filtering truth callset...", flush=True)
     truth_callset.filter_out_uncovered_events(interval_collection)
+    plotting.plot_and_save_callset_event_distribution_plots(gcnv_callset, "GCNV callset", output_directory)
+    plotting.plot_and_save_callset_event_distribution_plots(truth_callset, "Truth callset", output_directory)
 
     print("Performing per event evaluation...", flush=True)
-    per_event_evaluator = PerEventEvaluator(truth_callset=truth_callset)
-    per_event_evaluation_result = per_event_evaluator.evaluate_callset_against_the_truth(gcnv_callset=gcnv_callset)
+    rare_intervals_subset = truth_callset.subset_intervals_to_rare_regions(interval_collection,
+                                                                           max_allelic_fraction=0.01)
+    common_intervals_subset = IntervalCollection(interval_collection.pyrange.subtract(rare_intervals_subset.pyrange))
+    per_event_evaluator = PerEventEvaluator(truth_callset=truth_callset, gcnv_callset=gcnv_callset)
+    print("%s/%s matching samples are found in the truth callset" %
+          (len(per_event_evaluator.sample_list_to_eval), len(gcnv_callset.sample_set)))
+    per_event_evaluation_result = per_event_evaluator.evaluate_callset_against_the_truth(gcnv_callset=gcnv_callset,
+                                                                                         regions_to_ignore=common_intervals_subset)
     plotting.plot_and_save_per_event_evaluation_results(per_event_evaluation_result, output_directory)
 
     print("Performing per event evaluation...", flush=True)
-    rare_intervals_subset = truth_callset.subset_intervals_to_rare_regions(interval_collection, max_allelic_fraction=0.01)
-    per_bin_evaluator = PerBinEvaluator(truth_callset=truth_callset, interval_collection=rare_intervals_subset)
+
+    per_bin_evaluator = PerBinEvaluator(truth_callset=truth_callset, gcnv_callset=gcnv_callset,
+                                        interval_collection=rare_intervals_subset)
     # TODO pass an optional number of PR curve points parameter
     per_bin_evaluation_result = per_bin_evaluator.evaluate_callset_against_the_truth(gcnv_callset)
     plotting.plot_and_save_per_bin_evaluation_results(per_bin_evaluation_result, output_directory)

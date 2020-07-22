@@ -1,12 +1,24 @@
-import matplotlib
-matplotlib.use('Agg')
+import matplotlib as mpl
+mpl.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from cycler import cycler
 import pandas as pd
 import os
 import numpy as np
 import math
 
 from evaluation_result import PerEventEvaluationResult, PerBinEvaluationResult
+from callset import Callset
+
+plt.style.use('seaborn')
+mpl.rcParams['lines.linewidth'] = 2
+mpl.rcParams['lines.markersize'] = '5'
+mpl.rcParams['figure.dpi'] = 80
+mpl.rcParams['axes.labelsize'] = 13.0
+mpl.rcParams['axes.titlesize'] = 17.0
+mpl.rcParams['axes.prop_cycle'] = cycler('color', ['#5d769c', '#55A868', '#C44E52', '#8172B2', '#CCB974', '#64B5CD'])
+mpl.rcParams['figure.figsize'] = [9., 7.]
 
 
 def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvaluationResult, output_directory: str):
@@ -16,25 +28,60 @@ def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvalua
     tp = evaluation_result.precision_size_to_tp
     fp = evaluation_result.precision_size_to_fp
     precisions_for_bins = [tp[i]/max((tp[i]+fp[i]), 1) for i in bins]
-    plt.plot(bins, precisions_for_bins)
-    plt.title("Precision stratified by exon number")
-    plt.xlabel("Number of exons")
-    plt.ylabel("Precision")
-    plt.xlim(bins[0], bins[-1])
-    plt.ylim(0, 1.)
+    called_events_in_bins = [tp[i] + fp[i] for i in bins]
+
+    gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[1, 1.8])
+    fig = plt.figure(figsize=(10, 8))
+    ax1 = fig.add_subplot(gs[0, :])
+    ax2 = fig.add_subplot(gs[1, :])
+
+    ax1.bar(bins, called_events_in_bins)
+    ax2.scatter(bins, precisions_for_bins)
+
+    ax1.set_title("Precision stratified by number of overlapping bins")
+    ax1.set_ylabel("Number called events")
+    ax2.set_xlabel("Number of bins")
+    ax2.set_ylabel("Precision")
+
     plt.savefig(os.path.join(output_directory, "precision.png"))
     plt.close()
+
     # Plot recall
     tp = evaluation_result.recall_size_to_tp
     fn = evaluation_result.recall_size_to_fn
     recall_for_bins = [tp[i]/max((tp[i]+fn[i]), 1) for i in bins]
-    plt.plot(bins, recall_for_bins)
-    plt.title("Recall stratified by interval number")
-    plt.xlabel("Number of exons")
-    plt.ylabel("Recall")
-    plt.xlim(bins[0], bins[-1])
-    plt.ylim(0, 1.)
+    true_events_in_bins = [tp[i] + fn[i] for i in bins]
+
+    gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[1, 1.8])
+    fig = plt.figure(figsize=(10, 8))
+    ax1 = fig.add_subplot(gs[0, :])
+    ax2 = fig.add_subplot(gs[1, :])
+
+    ax1.bar(bins, true_events_in_bins)
+    ax2.scatter(bins, recall_for_bins)
+
+    ax1.set_title("Recall stratified by number of overlapping bins")
+    ax1.set_ylabel("Number of true events")
+    ax2.set_xlabel("Number of bins")
+    ax2.set_ylabel("Precision")
+
     plt.savefig(os.path.join(output_directory, "recall.png"))
+    plt.close()
+
+
+def plot_and_save_callset_event_distribution_plots(callset_: Callset, callset_name: str, output_directory: str):
+    callset_num_events_distr = callset_.get_callset_num_events_distribution()
+    plt.hist(callset_num_events_distr, bins=(int(max(callset_num_events_distr) / 2)))
+    plt.xlabel('Number of events')
+    plt.title(callset_name + ", number of events distribution")
+    plt.savefig(os.path.join(output_directory, callset_name + "_num_events_distribution.png"))
+    plt.close()
+
+    callset_event_size_distr = callset_.get_callset_event_size_distribution()
+    plt.hist(callset_event_size_distr, bins=(int(max(callset_event_size_distr) / 2)))
+    plt.xlabel('Event size in bins')
+    plt.title(callset_name + ", event size distribution")
+    plt.savefig(os.path.join(output_directory, callset_name + "_event_size_distribution.png"))
     plt.close()
 
 

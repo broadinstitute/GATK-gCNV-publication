@@ -16,7 +16,7 @@ class CallsetMatrixView:
     Matrix representation of a callset, that contains a corresponding callset genotypes in each of the
     (#samples) * (#intervals) positions. The object may also optionally contain a matrix of corresponding genotype
     qualities.
-    """
+    """j
 
     def __init__(self, sample_list: List, intervals_by_sample_call_matrix: np.ndarray,
                  intervals_by_sample_quality_matrix: np.ndarray):
@@ -49,14 +49,15 @@ class Callset:
         self.sample_to_pyrange_map = sample_to_pyrange_map
         self.sample_set = frozenset(sample_to_pyrange_map.keys())
 
-    def get_event_generator(self) -> Generator[Event, None, None]:
+    def get_event_generator(self, sample_list: List[str], min_quality_threshold=None) -> Generator[Event, None, None]:
         """
         Get a generator that yields all events in the callset, i.e. for each site it will output all non-reference
         events containing all samples at this site
 
         :return: per event generator
         """
-        for sample in self.sample_set:
+        for sample in sample_list:
+            assert sample in self.sample_set, "Queried sample (%s) is not in the callset." % sample
             for k, df in self.sample_to_pyrange_map[sample]:
                 for index, event in df.iterrows():
                     if event['Genotype'] == EventType.REF:
@@ -64,8 +65,10 @@ class Callset:
                     interval = Interval(event['Chromosome'], event['Start'], event['End'])
                     event_type = event['Genotype']
                     call_attributes = {'NumBins': event['NumBins'], 'Quality': event['Quality']}
-
-                    yield Event(interval, sample, event_type, call_attributes)
+                    if min_quality_threshold is None:
+                        yield Event(interval, sample, event_type, call_attributes)
+                    if min_quality_threshold is not None and call_attributes['Quality'] > min_quality_threshold:
+                        yield Event(interval, sample, event_type, call_attributes)
 
     def get_callset_matrix_view(self, interval_collection: IntervalCollection, sample_list: List[str]) -> CallsetMatrixView:
         """
@@ -73,12 +76,12 @@ class Callset:
         corresponding positions
 
         :param interval_collection: interval collection
-        :param sample_list: sample list
+        :param sample_list: sample subset from the callset
         :return: CallsetMatrixView containing event by interval matrix
         """
-        sample_by_interval_genotype_matrix = np.zeros((len(self.sample_set), len(interval_collection)), dtype=np.uint8)
-        sample_by_interval_quality_matrix = np.zeros((len(self.sample_set), len(interval_collection)), dtype=np.uint16)
-        reciprocal_overlaps_matrix = np.zeros((len(self.sample_set), len(interval_collection)))
+        sample_by_interval_genotype_matrix = np.zeros((len(sample_list), len(interval_collection)), dtype=np.uint8)
+        sample_by_interval_quality_matrix = np.zeros((len(sample_list), len(interval_collection)), dtype=np.uint16)
+        reciprocal_overlaps_matrix = np.zeros((len(sample_list), len(interval_collection)))
 
         indexed_interval_collection_pyrange = interval_collection.pyrange.insert(pd.Series(
             data=interval_collection.pyrange.df.index.tolist(), name="Index"))
@@ -112,6 +115,25 @@ class Callset:
         return [Event(Interval(row['Chromosome'], row['Start'], row['End']), sample, row['Genotype'],
                       {'NumBins': row['NumBins'], 'Quality': row['Quality']})
                 for index, row in intersecting_calls.df.iterrows() if row["Genotype"] != EventType.REF]
+
+    def get_callset_num_events_distribution(self) -> List[int]:
+        """
+        :return: list containing number of events for each sample
+        """
+        num_events_distr = []
+        for sample in self.sample_set:
+            num_events_distr.append(len(self.sample_to_pyrange_map[sample]))
+        return num_events_distr
+
+    def get_callset_event_size_distribution(self, max_allele_fraction: float = 1.0) -> List[int]:
+        """
+        :return: list containing event size (in overlapping bins) for each event
+        """
+        event_size_distr = []
+        for event in self.get_event_generator(list(self.sample_set)):
+            if event.call_attributes['Frequency'] < max_allele_fraction:
+                event_size_distr.append(event.call_attributes["NumBins"])
+        return event_size_distr
 
 
 class TruthCallset(Callset):
@@ -230,6 +252,17 @@ class TruthCallset(Callset):
         rare_intervals_pr = rare_intervals_pr.merge()
         rare_intervals_pr = pr.PyRanges(rare_intervals_pr.df)  # This is to resolve a dtypes issue
         return IntervalCollection(rare_intervals_pr)
+
+    def get_callset_allele_size_distribution(self, max_allele_fraction: int = 1.0) -> List[int]:
+        """
+        :return: distribution of
+        """
+        allelic_size_distr = []
+        for k, df in self.truth_callset_pyrange:
+            for index, truth_event in df.iterrows():
+                if truth_event["Frequency"] < max_allele_fraction:
+                    allelic_size_distr.append(truth_event['NumBins'])
+        return allelic_size_distr
 
 
 class GCNVCallset(Callset):

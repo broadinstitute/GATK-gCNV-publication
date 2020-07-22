@@ -98,7 +98,8 @@ def test_truth_callset():
     for s in truth_callset_actual.sample_set:
         assert truth_callset_actual.sample_to_pyrange_map[s].df.equals(TRUTH_CALLSET_SAMPLE_TO_PYRANGE_MAP[s].df)
 
-    rare_intervals_subset_actual = truth_callset_actual.subset_intervals_to_rare_regions(interval_collection, max_allelic_fraction=0.5)
+    rare_intervals_subset_actual = truth_callset_actual.subset_intervals_to_rare_regions(interval_collection,
+                                                                                         max_allelic_fraction=0.5)
     assert rare_intervals_subset_actual.pyrange.df.equals(TRUTH_CALLSET_RARE_INTERVALS_SUBSET_PYRANGE_EXPECTED.df)
 
 

@@ -1,5 +1,6 @@
 from enum import Enum
 from interval import Interval
+from typing import List
 
 
 class EventType(Enum):
@@ -52,3 +53,14 @@ class Event:
         if self.interval.get_reciprocal_overlap(other.interval) < minimum_reciprocal_overlap:
             return False
         return True
+
+    def find_event_with_largest_reciprocal_overlap(self, event_list: List):
+        """
+        From list of events select one with largest reciprocal overlap with interval in self
+        :param event_list: given interval list
+        :return: event with largest reciprocal overlap
+        """
+        if not event_list:
+            return None
+        events_reciprocal_ovelaps = [self.interval.get_reciprocal_overlap(event.interval) for event in event_list]
+        return event_list[events_reciprocal_ovelaps.index(max(events_reciprocal_ovelaps))]
