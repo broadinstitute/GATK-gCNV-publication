@@ -24,10 +24,14 @@ mpl.rcParams['figure.figsize'] = [9., 7.]
 def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvaluationResult, output_directory: str):
     bins = evaluation_result.event_size_bins
 
+    def sum_over_dict(d: dict, last_index: int, bins: list):
+        return sum([d[i] for i in bins[last_index:]])
+
     # Plot precision
     tp = evaluation_result.precision_size_to_tp
     fp = evaluation_result.precision_size_to_fp
-    precisions_for_bins = [tp[i]/max((tp[i]+fp[i]), 1) for i in bins]
+    # precisions_for_bins = [tp[i] / (tp[i] + fp[i]) for i in bins]
+    precisions_for_bins = [sum_over_dict(tp, i, bins)/(sum_over_dict(tp, i, bins)+sum_over_dict(fp, i, bins)) for i in bins]
     called_events_in_bins = [tp[i] + fp[i] for i in bins]
 
     gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[1, 1.8])
@@ -40,7 +44,7 @@ def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvalua
 
     ax1.set_title("Precision stratified by number of overlapping bins")
     ax1.set_ylabel("Number called events")
-    ax2.set_xlabel("Number of bins")
+    ax2.set_xlabel(">= number of bins")
     ax2.set_ylabel("Precision")
 
     plt.savefig(os.path.join(output_directory, "precision.png"))
@@ -49,7 +53,8 @@ def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvalua
     # Plot recall
     tp = evaluation_result.recall_size_to_tp
     fn = evaluation_result.recall_size_to_fn
-    recall_for_bins = [tp[i]/max((tp[i]+fn[i]), 1) for i in bins]
+    #recall_for_bins = [tp[i] / (tp[i] + fn[i]) for i in bins]
+    recall_for_bins = [sum_over_dict(tp, i, bins)/(sum_over_dict(tp, i, bins)+sum_over_dict(fn, i, bins)) for i in bins]
     true_events_in_bins = [tp[i] + fn[i] for i in bins]
 
     gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[1, 1.8])
@@ -62,8 +67,8 @@ def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvalua
 
     ax1.set_title("Recall stratified by number of overlapping bins")
     ax1.set_ylabel("Number of true events")
-    ax2.set_xlabel("Number of bins")
-    ax2.set_ylabel("Precision")
+    ax2.set_xlabel(">= number of bins")
+    ax2.set_ylabel("Recall")
 
     plt.savefig(os.path.join(output_directory, "recall.png"))
     plt.close()

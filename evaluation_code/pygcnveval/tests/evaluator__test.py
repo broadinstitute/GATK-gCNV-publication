@@ -38,13 +38,14 @@ PER_BIN_EVALUATION_RESULT_EXPECTED.false_negatives = {0.0: 8, 20.0: 8, 60.0: 10,
 
 def test_event_evaluator():
     interval_collection = IntervalCollection.read_interval_list(ANALYZED_INTERVALS)
-    gcnv_callset = GCNVCallset.read_in_callset(gcnv_segment_vcfs=GCNV_CALLSET_TEST_VCF_LIST)
+    gcnv_callset = GCNVCallset.read_in_callset(gcnv_segment_vcfs=GCNV_CALLSET_TEST_VCF_LIST,
+                                               interval_collection=interval_collection)
     truth_callset = TruthCallset.read_in_callset(truth_callset_bed_file=TRUTH_CALLSET_TEST_BED,
                                                  interval_collection=interval_collection,
                                                  samples_to_keep=gcnv_callset.sample_set)
     truth_callset.filter_out_uncovered_events(interval_collection, min_overlap_fraction=0.3)
     evaluator = PerEventEvaluator(truth_callset=truth_callset, gcnv_callset=gcnv_callset)
-    evaluation_result_actual = evaluator.evaluate_callset_against_the_truth(gcnv_callset=gcnv_callset, minimum_reciprocal_overlap=0.4)
+    evaluation_result_actual = evaluator.evaluate_callset_against_the_truth(gcnv_callset=gcnv_callset, minimum_overlap=0.4)
     assert evaluation_result_actual == PER_EVENT_EVALUATION_RESULT_EXPECTED
 
 

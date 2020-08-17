@@ -79,8 +79,11 @@ GCNV_CALLSET_MATRIX_VIEW_EXPECTED = CallsetMatrixView(GCNV_CALLSET_MATRIX_VIEW_S
 
 
 def test_gcnv_callset():
-    gcnv_callset_actual = GCNVCallset.read_in_callset(gcnv_segment_vcfs=[GCNV_CALLSET_TEST_VCF])
+    interval_collection = IntervalCollection.read_interval_list(ANALYZED_INTERVALS)
+    gcnv_callset_actual = GCNVCallset.read_in_callset(gcnv_segment_vcfs=[GCNV_CALLSET_TEST_VCF],
+                                                      interval_collection=interval_collection)
     assert gcnv_callset_actual.sample_to_pyrange_map[GCNV_CALLSET_SAMPLE_NAME].df.equals(GCNV_CALLSET_TEST_PYRANGE_EXPECTED.df)
+    [print(str(i) + ":" + str(gcnv_callset_actual.cached_interval_to_targets_map[i])) for i in gcnv_callset_actual.cached_interval_to_targets_map.keys()]
 
 
 def test_truth_callset():
@@ -89,7 +92,19 @@ def test_truth_callset():
     truth_callset_actual = TruthCallset.read_in_callset(truth_callset_bed_file=TRUTH_CALLSET_TEST_BED,
                                                         interval_collection=interval_collection,
                                                         samples_to_keep=SAMPLES_TO_KEEP)
-    assert truth_callset_actual.truth_callset_pyrange.df.equals(TRUTH_CALLSET_TEST_PYRANGE_EXPECTED.df)
+    from interval import Interval
+    from collections import defaultdict
+    interval_to_target_map = defaultdict(lambda: set())
+
+    joined_intervals = truth_callset_actual.truth_callset_pyrange.join(interval_collection.pyrange)
+    for k, df in joined_intervals:
+        for index, event in df.iterrows():
+            interval = Interval(event['Chromosome'], event['Start'], event['End'])
+            interval_to_target_map[interval].add(str(Interval(event['Chromosome'], event['Start_b'], event['End_b'])))
+    #[print(str(i) + ":" + str(interval_to_target_map[i])) for i in
+    # interval_to_target_map.keys()]
+
+    #assert truth_callset_actual.truth_callset_pyrange.df.equals(TRUTH_CALLSET_TEST_PYRANGE_EXPECTED.df)
     # Test filtering
 
     truth_callset_actual.filter_out_uncovered_events(interval_collection, min_overlap_fraction=0.3)
@@ -98,6 +113,10 @@ def test_truth_callset():
     for s in truth_callset_actual.sample_set:
         assert truth_callset_actual.sample_to_pyrange_map[s].df.equals(TRUTH_CALLSET_SAMPLE_TO_PYRANGE_MAP[s].df)
 
+    joined_sample_level_callsets_df = pd.concat([truth_callset_actual.sample_to_pyrange_map[s].df for s in truth_callset_actual.sample_set], ignore_index=True)
+    joined_sample_level_callset_pr = pr.PyRanges(joined_sample_level_callsets_df)
+    print(joined_sample_level_callsets_df)
+    print(joined_sample_level_callsets_df.groupby(["Chromosome", "Start", "End"]).apply(lambda group: sum(group['NumBins'])))
     rare_intervals_subset_actual = truth_callset_actual.subset_intervals_to_rare_regions(interval_collection,
                                                                                          max_allelic_fraction=0.5)
     assert rare_intervals_subset_actual.pyrange.df.equals(TRUTH_CALLSET_RARE_INTERVALS_SUBSET_PYRANGE_EXPECTED.df)
@@ -110,17 +129,19 @@ def test_sample_by_interval_matrix():
                                                  interval_collection=interval_collection,
                                                  samples_to_keep=SAMPLES_TO_KEEP)
     callset_matrix_view_actual = truth_callset.get_callset_matrix_view(interval_collection, list(truth_callset.sample_set))
+    print(callset_matrix_view_actual.samples_by_intervals_quality_matrix)
     assert callset_matrix_view_actual == TRUTH_CALLSET_CALLSET_MATRIX_VIEW_EXPECTED
 
     gcnv_callset = GCNVCallset.read_in_callset(gcnv_segment_vcfs=[GCNV_CALLSET_MATRIX_TEST_VCF])
     gcnv_callset_matrix_view_actual = gcnv_callset.get_callset_matrix_view(interval_collection, list(gcnv_callset.sample_set))
+    print(gcnv_callset_matrix_view_actual.samples_by_intervals_quality_matrix)
     assert gcnv_callset_matrix_view_actual == GCNV_CALLSET_MATRIX_VIEW_EXPECTED
 
 
 def main():
     test_gcnv_callset()
-    test_truth_callset()
-    test_sample_by_interval_matrix()
+    #test_truth_callset()
+    #test_sample_by_interval_matrix()
 
 
 if __name__ == '__main__':

@@ -13,7 +13,6 @@ class PerEventEvaluationResult:
         self.recall_size_to_fn = {i: 0 for i in event_size_bins}
 
     def update_precision(self, num_intervals: int, event_valid: bool):
-        # TODO implement the general case of binning
         index = min(num_intervals - 1, len(self.event_size_bins) - 1)
         if event_valid:
             self.precision_size_to_tp[index] += 1
@@ -21,7 +20,6 @@ class PerEventEvaluationResult:
             self.precision_size_to_fp[index] += 1
 
     def update_recall(self, num_intervals: int, event_valid: bool):
-        # TODO implement the general case of binning
         index = min(num_intervals - 1, len(self.event_size_bins) - 1)
         if event_valid:
             self.recall_size_to_tp[index] += 1
@@ -45,8 +43,9 @@ class PerBinEvaluationResult:
         :param quality_matrix:
         :param number_points:
         """
-        self.quality_thresholds = sorted(list(set(np.percentile(
-            quality_matrix, [(i / number_points) * 100 for i in range(number_points + 1)]))))
+        self.quality_thresholds = [0, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 90, 100, 110, 120, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000, 3000]
+        #self.quality_thresholds = sorted(list(set(np.percentile(
+        #    quality_matrix, [(i / number_points) * 100 for i in range(number_points + 1)]))))
         self.true_positives = {q: 0 for q in self.quality_thresholds}
         self.false_positives = {q: 0 for q in self.quality_thresholds}
         self.false_negatives = {q: 0 for q in self.quality_thresholds}

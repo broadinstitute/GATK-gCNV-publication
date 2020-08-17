@@ -30,29 +30,43 @@ class EventType(Enum):
 class Event:
     """Stores an event type and call qualities for a single interval and single sample"""
 
-    def __init__(self, interval: Interval, sample: str, event_type: EventType, call_attributes: map):
+    def __init__(self, interval: Interval, sample: str, event_type: EventType, call_attributes: map,
+                 overlapping_target_set: set):
         self.interval = interval
         self.sample = sample
         self.event_type = event_type
         self.call_attributes = call_attributes
+        self.overlapping_target_set = overlapping_target_set
 
     def __eq__(self, other):
         return self.interval == other.interval and self.sample == other.sample \
                  and self.event_type == other.event_type and self.call_attributes == other.call_attributes
 
-    def compare_to(self, other, minimum_reciprocal_overlap: float) -> bool:
+    def compare_to(self, other, minimum_target_overlap: float) -> bool:
         """
 
         :param other: event to validate against
-        :param minimum_reciprocal_overlap: minimum ro required to validate event
-        :return: whether two events are equivalent given conditions
+        :param minimum_target_overlap: minimum fraction of overlapping targets required to validate event
+        :return: whether self validates against provided event given conditions
         """
         assert self.sample == other.sample
         if self.event_type != other.event_type:
             return False
-        if self.interval.get_reciprocal_overlap(other.interval) < minimum_reciprocal_overlap:
+        number_overlapping_targets = len(self.overlapping_target_set.intersection(other.overlapping_target_set))
+        if number_overlapping_targets / len(self.overlapping_target_set) < minimum_target_overlap:
             return False
         return True
+
+    def find_event_with_largest_overlap(self, event_list: List):
+        """
+        From list of events select one with largest overlap (not reciprocal) with interval in self
+        :param event_list: given interval list
+        :return: event with overlap
+        """
+        if not event_list:
+            return None
+        events_overlaps = [self.interval.get_overlap(event.interval) for event in event_list]
+        return event_list[events_overlaps.index(max(events_overlaps))]
 
     def find_event_with_largest_reciprocal_overlap(self, event_list: List):
         """

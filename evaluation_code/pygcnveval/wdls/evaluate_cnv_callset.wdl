@@ -3,18 +3,25 @@
 
 workflow EvaluateCNVCallset {
 
-    ##################################
-    #### required basic arguments ####
-    ##################################
+    ###############################
+    #### required files ###########
+    ###############################
     Array[File]+ genotyped_segments_vcfs
     File truth_bed
     File analyzed_intervals
     String gcnv_evaluation_docker
 
+    ####################################
+    ###### required parameters #########
+    ####################################
+    Float min_required_overlap
+    Int min_sq_threshold
+
     ##################################
     #### optional basic arguments ####
     ##################################
     Int? preemptible_attempts
+
     String gcnv_eval_script = "/root/evaluate_cnv_callset.py"
 
     call EvaluateCalls {
@@ -24,6 +31,8 @@ workflow EvaluateCNVCallset {
             analyzed_intervals = analyzed_intervals,
             gcnv_evaluation_docker = gcnv_evaluation_docker,
             gcnv_eval_script = gcnv_eval_script,
+            min_required_overlap = min_required_overlap,
+            min_sq_threshold = min_sq_threshold,
             preemptible_attempts = preemptible_attempts
     }
 
@@ -37,6 +46,8 @@ task EvaluateCalls {
     File truth_bed
     File analyzed_intervals
     String gcnv_eval_script
+    Float min_required_overlap
+    Int min_sq_threshold
 
     #Runtime parameters
     String gcnv_evaluation_docker
@@ -55,7 +66,9 @@ task EvaluateCalls {
           --output_dir "./plots/" \
           --gcnv_segment_vcfs ${sep=' ' genotyped_segments_vcfs} \
           --sorted_truth_calls_bed ${truth_bed} \
-          --analyzed_intervals ${analyzed_intervals}
+          --analyzed_intervals ${analyzed_intervals} \
+          --min_required_overlap ${min_required_overlap} \
+          --min_sq_threshold ${min_sq_threshold}
     >>>
 
     runtime {
