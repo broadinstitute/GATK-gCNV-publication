@@ -19,13 +19,15 @@ class PerEventEvaluator:
 
         # Calculate precision
         for gcnv_event in gcnv_callset.get_event_generator(self.sample_list_to_eval, min_sq_threshold):
-            if regions_to_ignore and \
-                    len(regions_to_ignore.pyrange[gcnv_event.interval.chrom, gcnv_event.interval.start:gcnv_event.interval.end]) > 0:
-                continue  # skip common regions
+            # if regions_to_ignore and \
+            #         len(regions_to_ignore.pyrange[gcnv_event.interval.chrom, gcnv_event.interval.start:gcnv_event.interval.end]) > 0:
+            #     continue  # skip common regions
             overlapping_truth_events = self.truth_callset.get_overlapping_events_for_sample(gcnv_event.interval,
                                                                                             gcnv_event.sample)
             overlapping_truth_event_best_match = gcnv_event.find_event_with_largest_overlap(overlapping_truth_events)
             if overlapping_truth_event_best_match:
+                if overlapping_truth_event_best_match.call_attributes['Frequency'] > 0.01:
+                    continue
                 event_validates = gcnv_event.compare_to(overlapping_truth_event_best_match, minimum_overlap)
                 evaluation_result.update_precision(gcnv_event.call_attributes['NumBins'], event_validates)
             else:
@@ -33,11 +35,18 @@ class PerEventEvaluator:
 
         # Calculate recall
         for truth_event in self.truth_callset.get_event_generator(self.sample_list_to_eval):
+            if truth_event.call_attributes['Frequency'] > 0.01:
+                continue
             #if regions_to_ignore and \
             #        len(regions_to_ignore.pyrange[truth_event.interval.chrom, truth_event.interval.start:truth_event.interval.end]) > 0:
             #    continue  # skip common regions
             overlapping_gcnv_events = gcnv_callset.get_overlapping_events_for_sample(truth_event.interval, truth_event.sample)
             overlapping_gcnv_events = [e for e in overlapping_gcnv_events if e.call_attributes['Quality'] >= min_sq_threshold]
+            if truth_event.call_attributes['NumBins'] > 20:
+                print(truth_event.sample)
+                print(truth_event.interval)
+                print(truth_event.call_attributes['Frequency'])
+                print("\n")
             if not overlapping_gcnv_events:
                 evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False)
             else:

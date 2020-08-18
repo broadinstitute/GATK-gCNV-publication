@@ -41,9 +41,9 @@ class CallsetMatrixView:
 
 
 class Callset:
-    CALLSET_COLUMNS = ["Chromosome", "Start", "End", "Genotype", "NumBins", "Quality"]
+    CALLSET_COLUMNS = ["Chromosome", "Start", "End", "Genotype", "NumBins", "Quality", "Frequency"]
     CALLSET_COLUMN_TYPES = {"Chromosome": "category", "Start": "int32", "End": "int32",
-                            "Genotype": "object", "NumBins": "int32", "Quality": "int32"}
+                            "Genotype": "object", "NumBins": "int32", "Quality": "int32", "Frequency": "float64"}
 
     JOINT_CALLSET_COLUMNS = ['Chromosome', 'Start', 'End', 'Name', 'Genotype', 'Samples', 'Frequency', 'NumBins']
     JOINT_CALLSET_COLUMN_TYPES = {"Chromosome": "category", "Start": "int32", "End": "int32", "Name": "object",
@@ -71,7 +71,7 @@ class Callset:
                     interval = Interval(event['Chromosome'], event['Start'], event['End'])
                     overlapping_target_set = self.cached_interval_to_targets_map[interval]
                     event_type = event['Genotype']
-                    call_attributes = {'NumBins': event['NumBins'], 'Quality': event['Quality']}
+                    call_attributes = {'NumBins': event['NumBins'], 'Quality': event['Quality'], 'Frequency': event['Frequency']}
                     if min_quality_threshold is None:
                         yield Event(interval, sample, event_type, call_attributes, overlapping_target_set)
                     if min_quality_threshold is not None and call_attributes['Quality'] >= min_quality_threshold:
@@ -120,7 +120,7 @@ class Callset:
         sample_pyrange = self.sample_to_pyrange_map[sample]
         intersecting_calls = sample_pyrange[interval.chrom, interval.start:interval.end]
         return [Event(Interval(row['Chromosome'], row['Start'], row['End']), sample, row['Genotype'],
-                      {'NumBins': row['NumBins'], 'Quality': row['Quality']},
+                      {'NumBins': row['NumBins'], 'Quality': row['Quality'], 'Frequency': row['Frequency']},
                       self.cached_interval_to_targets_map[Interval(row['Chromosome'], row['Start'], row['End'])])
                 for index, row in intersecting_calls.df.iterrows() if row["Genotype"] != EventType.REF]
 
@@ -247,7 +247,7 @@ class TruthCallset(Callset):
                 for sample in truth_event['Samples']:
                     if sample in sample_set:
                         event = {'Chromosome': truth_event['Chromosome'], 'Start': truth_event['Start'], "End": truth_event['End'],
-                                 "Genotype": truth_event['Genotype'], "NumBins": truth_event['NumBins'], "Quality": 0}
+                                 "Genotype": truth_event['Genotype'], "NumBins": truth_event['NumBins'], "Quality": 0, "Frequency": truth_event['Frequency']}
                         sample_to_events_list_map[sample].append(event)
 
         for sample in sample_set:
@@ -322,7 +322,7 @@ class GCNVCallset(Callset):
             for record in vcf_reader:
                 event_type = EventType.gcnv_call_to_event_type(int(record.genotype(sample_name)['GT']))
                 event = (record.CHROM, int(record.POS), int(record.INFO['END']), event_type,
-                         int(record.genotype(sample_name)['NP']), int(record.genotype(sample_name)['QS']))
+                         int(record.genotype(sample_name)['NP']), int(record.genotype(sample_name)['QS']), 0.0)
                 events_df.loc[len(events_df)] = event
 
             events_df = events_df.astype(Callset.CALLSET_COLUMN_TYPES)

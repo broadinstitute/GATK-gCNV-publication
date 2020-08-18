@@ -62,7 +62,7 @@ def test_bin_evaluator():
 
 def main():
     test_event_evaluator()
-    test_bin_evaluator()
+    #test_bin_evaluator()
 
 
 if __name__ == '__main__':

@@ -46,6 +46,7 @@ def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvalua
     ax1.set_ylabel("Number called events")
     ax2.set_xlabel(">= number of bins")
     ax2.set_ylabel("Precision")
+    ax2.set_ylim(0, 1.)
 
     plt.savefig(os.path.join(output_directory, "precision.png"))
     plt.close()
@@ -69,6 +70,7 @@ def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvalua
     ax1.set_ylabel("Number of true events")
     ax2.set_xlabel(">= number of bins")
     ax2.set_ylabel("Recall")
+    ax2.set_ylim(0, 1.)
 
     plt.savefig(os.path.join(output_directory, "recall.png"))
     plt.close()
@@ -126,7 +128,7 @@ def count_num_variants(vcf_file):
 def plot_ard_components(models_dir, num_shards):
     num_plots_per_row = 4
     num_rows = math.ceil(num_shards/num_plots_per_row)
-    plt.figure(figsize=(20,20))
+    plt.figure(figsize=(20, 20))
     for i in range(num_shards):
         ard_file = models_dir + "/shard-" + str(i) + "/mu_ard_u_log__.tsv"
         ard_df = pd.read_csv(open(ard_file, 'r'), comment="@", sep='\t', header=None)
