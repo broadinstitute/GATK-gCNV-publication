@@ -44,8 +44,8 @@ def test_event_evaluator():
                                                  interval_collection=interval_collection,
                                                  samples_to_keep=gcnv_callset.sample_set)
     truth_callset.filter_out_uncovered_events(interval_collection, min_overlap_fraction=0.3)
-    evaluator = PerEventEvaluator(truth_callset=truth_callset, gcnv_callset=gcnv_callset)
-    evaluation_result_actual = evaluator.evaluate_callset_against_the_truth(gcnv_callset=gcnv_callset, minimum_overlap=0.4)
+    evaluator = PerEventEvaluator(truth_callset=truth_callset, callset=gcnv_callset)
+    evaluation_result_actual = evaluator.evaluate_callset_against_the_truth(minimum_overlap=0.4)
     assert evaluation_result_actual == PER_EVENT_EVALUATION_RESULT_EXPECTED
 
 

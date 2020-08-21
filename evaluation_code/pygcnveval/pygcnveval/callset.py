@@ -1,6 +1,7 @@
 import pyranges as pr
 import numpy as np
 from typing import FrozenSet, List, Generator
+from abc import ABC, abstractmethod
 import vcf
 import pandas as pd
 import shutil
@@ -40,7 +41,7 @@ class CallsetMatrixView:
         return True
 
 
-class Callset:
+class Callset(ABC):
     CALLSET_COLUMNS = ["Chromosome", "Start", "End", "Genotype", "NumBins", "Quality", "Frequency"]
     CALLSET_COLUMN_TYPES = {"Chromosome": "category", "Start": "int32", "End": "int32",
                             "Genotype": "object", "NumBins": "int32", "Quality": "int32", "Frequency": "float64"}
@@ -161,9 +162,33 @@ class Callset:
         s = joined_intervals_df.groupby(["Chromosome", "Start", "End"]).apply(construct_interval_to_targets_list_map)
         interval_to_targets_map = dict(s.tolist())
         for interval in interval_to_targets_map:
-           interval_to_targets_map[interval] = set(interval_to_targets_map[interval])
+            interval_to_targets_map[interval] = set(interval_to_targets_map[interval])
 
         return interval_to_targets_map
+
+    @staticmethod
+    def _construct_sample_to_pyrange_map(truth_callset_pyrange: pr.PyRanges, sample_set: FrozenSet):
+        sample_to_pyrange_map = {}
+        sample_to_events_list_map = {}
+        for sample in sample_set:
+            sample_to_events_list_map[sample] = []
+        for k, df in truth_callset_pyrange:
+            for index, truth_event in df.iterrows():
+                for sample in truth_event['Samples']:
+                    if sample in sample_set:
+                        event = {'Chromosome': truth_event['Chromosome'], 'Start': truth_event['Start'], "End": truth_event['End'],
+                                 "Genotype": truth_event['Genotype'], "NumBins": truth_event['NumBins'], "Quality": 0, "Frequency": truth_event['Frequency']}
+                        sample_to_events_list_map[sample].append(event)
+
+        for sample in sample_set:
+            events_df = pd.DataFrame(sample_to_events_list_map[sample])
+            events_df = events_df.astype(Callset.CALLSET_COLUMN_TYPES)
+            sample_to_pyrange_map[sample] = pr.PyRanges(events_df)
+        return sample_to_pyrange_map
+
+    @abstractmethod
+    def get_name(self):
+        pass
 
 
 class TruthCallset(Callset):
@@ -198,63 +223,9 @@ class TruthCallset(Callset):
         truth_callset_pyrange.NumBins = truth_callset_with_coverage_pyrange.df["C"]
 
         # Construct a map from samples to corresponding sample level callsets
-        sample_to_pyrange_map = TruthCallset._construct_sample_to_pyrange_map(truth_callset_pyrange, sample_set)
+        sample_to_pyrange_map = Callset._construct_sample_to_pyrange_map(truth_callset_pyrange, sample_set)
 
         return cls(truth_callset_pyrange, sample_to_pyrange_map, interval_collection)
-
-    # def get_callset_matrix_view(self, interval_collection: IntervalCollection, sample_list: List[str]) -> CallsetMatrixView:
-    #     """
-    #     We override superclass's method to boost performance, taking advantage of monolithic `truth_callset_pyrange`
-    #     """
-    #     def get_genotype_array_from_intersecting_events(interval_: Interval, samples_to_index_: dict,
-    #                                                     intersecting_events_: pr.PyRanges):
-    #         genotype_array = np.zeros(len(samples_to_index))
-    #         reciprocal_overlap_array = np.zeros(len(samples_to_index))
-    #         if intersecting_events_.empty:
-    #             return genotype_array
-    #         for k_, df_ in intersecting_events_:
-    #             for index_, row_ in df_.iterrows():
-    #                 ro = interval_.get_reciprocal_overlap(Interval(row_["Chromosome"], row_["Start"], row_["End"]))
-    #                 for sample in row_["Samples"]:
-    #                     if ro >= reciprocal_overlap_array[samples_to_index_[sample]]:
-    #                         genotype_array[samples_to_index_[sample]] = row_["Genotype"].value
-    #                         reciprocal_overlap_array[samples_to_index_[sample]] = ro
-    #         return genotype_array
-    #
-    #     samples_to_index = {sample_list[i]: i for i in range(len(sample_list))}
-    #     sample_by_interval_genotype_matrix = np.zeros((len(self.sample_set), len(interval_collection)), dtype=np.uint8)
-    #     intervals_by_sample_quality_matrix = np.zeros((len(self.sample_set), len(interval_collection)), dtype=np.uint16)
-    #     i = 0
-    #     for k, df in interval_collection.pyrange:
-    #         for index, row in df.iterrows():
-    #             interval = Interval(row["Chromosome"], row["Start"], row["End"])
-    #             intersecting_events = self.truth_callset_pyrange[interval.chrom, interval.start:interval.end]
-    #             sample_by_interval_genotype_matrix[:, i] = get_genotype_array_from_intersecting_events(interval,
-    #                                                                                                    samples_to_index,
-    #                                                                                                    intersecting_events)
-    #             i += 1
-    #
-    #     return CallsetMatrixView(sample_list, sample_by_interval_genotype_matrix, intervals_by_sample_quality_matrix)
-
-    @staticmethod
-    def _construct_sample_to_pyrange_map(truth_callset_pyrange: pr.PyRanges, sample_set: FrozenSet):
-        sample_to_pyrange_map = {}
-        sample_to_events_list_map = {}
-        for sample in sample_set:
-            sample_to_events_list_map[sample] = []
-        for k, df in truth_callset_pyrange:
-            for index, truth_event in df.iterrows():
-                for sample in truth_event['Samples']:
-                    if sample in sample_set:
-                        event = {'Chromosome': truth_event['Chromosome'], 'Start': truth_event['Start'], "End": truth_event['End'],
-                                 "Genotype": truth_event['Genotype'], "NumBins": truth_event['NumBins'], "Quality": 0, "Frequency": truth_event['Frequency']}
-                        sample_to_events_list_map[sample].append(event)
-
-        for sample in sample_set:
-            events_df = pd.DataFrame(sample_to_events_list_map[sample])
-            events_df = events_df.astype(Callset.CALLSET_COLUMN_TYPES)
-            sample_to_pyrange_map[sample] = pr.PyRanges(events_df)
-        return sample_to_pyrange_map
 
     def filter_out_uncovered_events(self, interval_collection: IntervalCollection,
                                     min_overlap_fraction: float = 0.00):
@@ -294,6 +265,9 @@ class TruthCallset(Callset):
                     allelic_size_distr.append(truth_event['NumBins'])
         return allelic_size_distr
 
+    def get_name(self):
+        return "Truth callset"
+
 
 class GCNVCallset(Callset):
 
@@ -320,7 +294,7 @@ class GCNVCallset(Callset):
             sample_name = vcf_reader.samples[0]
             events_df = pd.DataFrame(columns=Callset.CALLSET_COLUMNS)
             for record in vcf_reader:
-                event_type = EventType.gcnv_call_to_event_type(int(record.genotype(sample_name)['GT']))
+                event_type = EventType.gcnv_call_to_event_type(record.genotype(sample_name)['GT'])
                 event = (record.CHROM, int(record.POS), int(record.INFO['END']), event_type,
                          int(record.genotype(sample_name)['NP']), int(record.genotype(sample_name)['QS']), 0.0)
                 events_df.loc[len(events_df)] = event
@@ -332,35 +306,44 @@ class GCNVCallset(Callset):
             sample_to_pyrange_map[sample_name] = events_pr
         return cls(sample_to_pyrange_map, None, interval_collection)
 
+    def get_name(self):
+        return "gCNV callset"
+
 
 class XHMMCallset(Callset):
     def __init__(self, sample_to_pyrange_map: dict, joint_callset: pr.PyRanges, interval_collection: IntervalCollection):
         super().__init__(sample_to_pyrange_map, joint_callset,  interval_collection)
 
     @classmethod
-    def read_in_callset(cls, xhmm_vcf: str, interval_collection: IntervalCollection):
-        # Handle gzip-ed VCF gcnv files
-
+    def read_in_callset(cls, xhmm_vcf: str, interval_collection: IntervalCollection, samples_to_keep: set = None):
         vcf_reader = vcf.Reader(open(xhmm_vcf, 'r'))
-        sample_list = vcf_reader.samples
+        sample_list = list(set(vcf_reader.samples).intersection(samples_to_keep))
 
-        events_df = pd.DataFrame(columns=Callset.CALLSET_COLUMNS)
         events_list = []
         for record in vcf_reader:
             del_call_samples = []
             dup_call_samples = []
 
             for sample in sample_list:
-                event_type = EventType.gcnv_call_to_event_type(int(record.genotype(sample)['GT']))
+                event_type = EventType.gcnv_call_to_event_type(record.genotype(sample)['GT'])
                 if event_type == EventType.DEL:
                     del_call_samples.append(sample)
                 if event_type == EventType.DUP:
                     dup_call_samples.append(sample)
 
-            chrom, start, end, num_bins = record.CHROM, int(record.POS), int(record.INFO['END']), int(record.genotype(sample)['NUMT'])
+            chrom, start, end, num_bins = record.CHROM, int(record.POS), int(record.INFO['END']), int(record.INFO['NUMT'])
+            name_prefix = str(chrom) + "_" + str(start) + "_" + str(end) + "_"
             if del_call_samples:
-                events_list.append([chrom, start, end, EventType.DEL, num_bins, frozenset(del_call_samples)])
+                events_list.append([chrom, start, end, name_prefix + "DEL", EventType.DEL, frozenset(del_call_samples), 0.0, num_bins])
             if dup_call_samples:
-                events_list.append([chrom, start, end, EventType.DEL, num_bins, frozenset(dup_call_samples)])
+                events_list.append([chrom, start, end, name_prefix + "DUP", EventType.DEL, frozenset(dup_call_samples), 0.0, num_bins])
 
         events_df = pd.DataFrame(events_list, columns=Callset.JOINT_CALLSET_COLUMNS)
+        events_df.astype(Callset.JOINT_CALLSET_COLUMN_TYPES)
+        joint_callset_pr = pr.PyRanges(events_df)
+
+        sample_to_pyrange_map = Callset._construct_sample_to_pyrange_map(joint_callset_pr, frozenset(sample_list))
+        return cls(sample_to_pyrange_map, joint_callset_pr, interval_collection)
+
+    def get_name(self):
+        return "XHMM callset"

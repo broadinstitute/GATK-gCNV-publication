@@ -12,8 +12,10 @@ class EventType(Enum):
     NO_CALL = 3
 
     @classmethod
-    def gcnv_call_to_event_type(cls, gcnv_call: int):
-        return cls(gcnv_call)
+    def gcnv_call_to_event_type(cls, gcnv_call: str):
+        if gcnv_call == '.':
+            return EventType.NO_CALL
+        return cls(int(gcnv_call))
 
     @staticmethod
     def get_event_type_from_svtype(sv_type: str):
@@ -76,5 +78,5 @@ class Event:
         """
         if not event_list:
             return None
-        events_reciprocal_ovelaps = [self.interval.get_reciprocal_overlap(event.interval) for event in event_list]
-        return event_list[events_reciprocal_ovelaps.index(max(events_reciprocal_ovelaps))]
+        events_reciprocal_overlaps = [self.interval.get_reciprocal_overlap(event.interval) for event in event_list]
+        return event_list[events_reciprocal_overlaps.index(max(events_reciprocal_overlaps))]

@@ -7,6 +7,7 @@ import pandas as pd
 import os
 import numpy as np
 import math
+from typing import List
 
 from evaluation_result import PerEventEvaluationResult, PerBinEvaluationResult
 from callset import Callset
@@ -21,56 +22,69 @@ mpl.rcParams['axes.prop_cycle'] = cycler('color', ['#5d769c', '#55A868', '#C44E5
 mpl.rcParams['figure.figsize'] = [9., 7.]
 
 
-def plot_and_save_per_event_evaluation_results(evaluation_result: PerEventEvaluationResult, output_directory: str):
-    bins = evaluation_result.event_size_bins
+def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerEventEvaluationResult], output_directory: str):
+    bins = evaluation_result_list[0].event_size_bins
+    for evaluation_result in evaluation_result_list:
+        assert evaluation_result.event_size_bins == bins, "Evaluation results are stratified by bin length differently"
 
     def sum_over_dict(d: dict, last_index: int, bins: list):
         return sum([d[i] for i in bins[last_index:]])
-
-    # Plot precision
-    tp = evaluation_result.precision_size_to_tp
-    fp = evaluation_result.precision_size_to_fp
-    # precisions_for_bins = [tp[i] / (tp[i] + fp[i]) for i in bins]
-    precisions_for_bins = [sum_over_dict(tp, i, bins)/(sum_over_dict(tp, i, bins)+sum_over_dict(fp, i, bins)) for i in bins]
-    called_events_in_bins = [tp[i] + fp[i] for i in bins]
 
     gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[1, 1.8])
     fig = plt.figure(figsize=(10, 8))
     ax1 = fig.add_subplot(gs[0, :])
     ax2 = fig.add_subplot(gs[1, :])
-
-    ax1.bar(bins, called_events_in_bins)
-    ax2.scatter(bins, precisions_for_bins)
+    num_results = len(evaluation_result_list)
+    width = 0.8 / num_results
+    offsets = np.linspace(-width / 2, width / 2, num_results) if num_results > 1 else [0]
+    for index, evaluation_result in enumerate(evaluation_result_list):
+        # Plot precision
+        tp = evaluation_result.precision_size_to_tp
+        fp = evaluation_result.precision_size_to_fp
+        # precisions_for_bins = [tp[i] / (tp[i] + fp[i]) for i in bins]
+        precisions_for_bins = [sum_over_dict(tp, i, bins)/(sum_over_dict(tp, i, bins)+sum_over_dict(fp, i, bins)) for i in bins]
+        called_events_in_bins = [tp[i] + fp[i] for i in bins]
+        ax1.bar(np.array(bins) + offsets[index], called_events_in_bins, width=width)
+        ax2.scatter(bins, precisions_for_bins, label=evaluation_result.tool_name)
 
     ax1.set_title("Precision stratified by number of overlapping bins")
     ax1.set_ylabel("Number called events")
     ax2.set_xlabel(">= number of bins")
     ax2.set_ylabel("Precision")
     ax2.set_ylim(0, 1.)
+    ax2.legend()
 
     plt.savefig(os.path.join(output_directory, "precision.png"))
     plt.close()
-
-    # Plot recall
-    tp = evaluation_result.recall_size_to_tp
-    fn = evaluation_result.recall_size_to_fn
-    #recall_for_bins = [tp[i] / (tp[i] + fn[i]) for i in bins]
-    recall_for_bins = [sum_over_dict(tp, i, bins)/(sum_over_dict(tp, i, bins)+sum_over_dict(fn, i, bins)) for i in bins]
-    true_events_in_bins = [tp[i] + fn[i] for i in bins]
 
     gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[1, 1.8])
     fig = plt.figure(figsize=(10, 8))
     ax1 = fig.add_subplot(gs[0, :])
     ax2 = fig.add_subplot(gs[1, :])
 
-    ax1.bar(bins, true_events_in_bins)
-    ax2.scatter(bins, recall_for_bins)
+    for evaluation_result in evaluation_result_list:
+        # Plot recall
+        tp = evaluation_result.recall_size_to_tp
+        fn = evaluation_result.recall_size_to_fn
+        # recall_for_bins = [tp[i] / (tp[i] + fn[i]) for i in bins]
+        recall_for_bins = [sum_over_dict(tp, i, bins) / (sum_over_dict(tp, i, bins) + sum_over_dict(fn, i, bins)) for i
+                           in bins]
+        ax2.scatter(bins, recall_for_bins, label=evaluation_result.tool_name)
 
+    true_events_in_bins = [evaluation_result_list[0].recall_size_to_tp[i]
+                           + evaluation_result_list[0].recall_size_to_fn[i] for i in bins]
+    for evaluation_result in evaluation_result_list:
+        assert true_events_in_bins == [evaluation_result.recall_size_to_tp[i]
+                                       + evaluation_result.recall_size_to_fn[i] for i in bins],\
+            "Subset of considered truth events was not same for all evaluated tools."
+
+    ax1.bar(bins, true_events_in_bins)
     ax1.set_title("Recall stratified by number of overlapping bins")
     ax1.set_ylabel("Number of true events")
     ax2.set_xlabel(">= number of bins")
     ax2.set_ylabel("Recall")
     ax2.set_ylim(0, 1.)
+    ax2.legend()
 
     plt.savefig(os.path.join(output_directory, "recall.png"))
     plt.close()
