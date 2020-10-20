@@ -55,6 +55,12 @@ class Callset(ABC):
         self.joint_callset = joint_callset
         self.sample_set = frozenset(sample_to_pyrange_map.keys())
         self.cached_interval_to_targets_map = self._create_cached_intervals_to_target_map(interval_collection)
+        # for i in range(5):
+        #     import random
+        #     key = random.choice(list(self.cached_interval_to_targets_map.keys()))
+        #     print(key)
+        #     print("-----------")
+        #     print(self.cached_interval_to_targets_map[key])
 
     def get_event_generator(self, sample_list: List[str], min_quality_threshold=None) -> Generator[Event, None, None]:
         """
@@ -69,8 +75,10 @@ class Callset(ABC):
                 for index, event in df.iterrows():
                     if event['Genotype'] == EventType.REF:
                         continue
+
                     interval = Interval(event['Chromosome'], event['Start'], event['End'])
                     overlapping_target_set = self.cached_interval_to_targets_map[interval]
+
                     event_type = event['Genotype']
                     call_attributes = {'NumBins': event['NumBins'], 'Quality': event['Quality'], 'Frequency': event['Frequency']}
                     if min_quality_threshold is None:
@@ -147,6 +155,14 @@ class Callset(ABC):
                 event_size_distr.append(event.call_attributes["NumBins"])
         return event_size_distr
 
+    def filter_out_uncovered_events(self, interval_collection: IntervalCollection,
+                                    min_overlap_fraction: float = 0.00):
+        callset_with_coverage = self.joint_callset.coverage(interval_collection.pyrange)
+        indices = callset_with_coverage.df['FractionOverlaps'] > min_overlap_fraction
+        self.joint_callset = callset_with_coverage[indices].drop(['NumberOverlaps', 'FractionOverlaps'])
+        #self.filtered_out_events = truth_callset_with_coverage[~indices].drop(['NumberOverlaps', 'FractionOverlaps'])
+        self.sample_to_pyrange_map = TruthCallset._construct_sample_to_pyrange_map(self.joint_callset, self.sample_set)
+
     def _create_cached_intervals_to_target_map(self, interval_collection: IntervalCollection):
         joined_sample_level_callsets_df = pd.concat([self.sample_to_pyrange_map[s].df for s in self.sample_set])
         joined_sample_level_callset_pr = pr.PyRanges(joined_sample_level_callsets_df)
@@ -167,12 +183,12 @@ class Callset(ABC):
         return interval_to_targets_map
 
     @staticmethod
-    def _construct_sample_to_pyrange_map(truth_callset_pyrange: pr.PyRanges, sample_set: FrozenSet):
+    def _construct_sample_to_pyrange_map(callset_pyrange: pr.PyRanges, sample_set: FrozenSet):
         sample_to_pyrange_map = {}
         sample_to_events_list_map = {}
         for sample in sample_set:
             sample_to_events_list_map[sample] = []
-        for k, df in truth_callset_pyrange:
+        for k, df in callset_pyrange:
             for index, truth_event in df.iterrows():
                 for sample in truth_event['Samples']:
                     if sample in sample_set:
@@ -196,11 +212,10 @@ class TruthCallset(Callset):
     JOINT_CALLSET_COLUMN_TYPES = {"Chromosome": "category", "Start": "int32", "End": "int32", "Name": "object",
                                   "Genotype": "object", "Samples": "object", "Frequency": "float64", "NumBins": "int64"}
 
-    def __init__(self, truth_callset_pyrange: pr.PyRanges, sample_to_pyrange_map: dict, interval_collection: IntervalCollection):
+    def __init__(self, sample_to_pyrange_map: dict, truth_callset_pyrange: pr.PyRanges, interval_collection: IntervalCollection):
         super().__init__(sample_to_pyrange_map, truth_callset_pyrange, interval_collection)
         self.truth_callset_pyrange = truth_callset_pyrange
         self.sample_to_pyrange_map = sample_to_pyrange_map
-        self.filtered_out_events = None
 
     @classmethod
     def read_in_callset(cls, truth_callset_bed_file: str, interval_collection: IntervalCollection, samples_to_keep: set = None):
@@ -225,15 +240,15 @@ class TruthCallset(Callset):
         # Construct a map from samples to corresponding sample level callsets
         sample_to_pyrange_map = Callset._construct_sample_to_pyrange_map(truth_callset_pyrange, sample_set)
 
-        return cls(truth_callset_pyrange, sample_to_pyrange_map, interval_collection)
+        return cls(sample_to_pyrange_map, truth_callset_pyrange, interval_collection)
 
-    def filter_out_uncovered_events(self, interval_collection: IntervalCollection,
-                                    min_overlap_fraction: float = 0.00):
-        truth_callset_with_coverage = self.truth_callset_pyrange.coverage(interval_collection.pyrange)
-        indices = truth_callset_with_coverage.df['FractionOverlaps'] > min_overlap_fraction
-        self.truth_callset_pyrange = truth_callset_with_coverage[indices].drop(['NumberOverlaps', 'FractionOverlaps'])
-        self.filtered_out_events = truth_callset_with_coverage[~indices].drop(['NumberOverlaps', 'FractionOverlaps'])
-        self.sample_to_pyrange_map = TruthCallset._construct_sample_to_pyrange_map(self.truth_callset_pyrange, self.sample_set)
+    # def filter_out_uncovered_events(self, interval_collection: IntervalCollection,
+    #                                 min_overlap_fraction: float = 0.00):
+    #     truth_callset_with_coverage = self.truth_callset_pyrange.coverage(interval_collection.pyrange)
+    #     indices = truth_callset_with_coverage.df['FractionOverlaps'] > min_overlap_fraction
+    #     self.truth_callset_pyrange = truth_callset_with_coverage[indices].drop(['NumberOverlaps', 'FractionOverlaps'])
+    #     self.filtered_out_events = truth_callset_with_coverage[~indices].drop(['NumberOverlaps', 'FractionOverlaps'])
+    #     self.sample_to_pyrange_map = TruthCallset._construct_sample_to_pyrange_map(self.truth_callset_pyrange, self.sample_set)
 
     def subset_intervals_to_rare_regions(self, intervals: IntervalCollection, max_allelic_fraction: float) -> IntervalCollection:
         """
@@ -266,7 +281,7 @@ class TruthCallset(Callset):
         return allelic_size_distr
 
     def get_name(self):
-        return "Truth callset"
+        return "Truth_callset"
 
 
 class GCNVCallset(Callset):
@@ -295,6 +310,8 @@ class GCNVCallset(Callset):
             events_df = pd.DataFrame(columns=Callset.CALLSET_COLUMNS)
             for record in vcf_reader:
                 event_type = EventType.gcnv_call_to_event_type(record.genotype(sample_name)['GT'])
+                if event_type == EventType.REF:
+                    continue
                 event = (record.CHROM, int(record.POS), int(record.INFO['END']), event_type,
                          int(record.genotype(sample_name)['NP']), int(record.genotype(sample_name)['QS']), 0.0)
                 events_df.loc[len(events_df)] = event
@@ -307,7 +324,7 @@ class GCNVCallset(Callset):
         return cls(sample_to_pyrange_map, None, interval_collection)
 
     def get_name(self):
-        return "gCNV callset"
+        return "gCNV_callset"
 
 
 class XHMMCallset(Callset):
@@ -336,7 +353,7 @@ class XHMMCallset(Callset):
             if del_call_samples:
                 events_list.append([chrom, start, end, name_prefix + "DEL", EventType.DEL, frozenset(del_call_samples), 0.0, num_bins])
             if dup_call_samples:
-                events_list.append([chrom, start, end, name_prefix + "DUP", EventType.DEL, frozenset(dup_call_samples), 0.0, num_bins])
+                events_list.append([chrom, start, end, name_prefix + "DUP", EventType.DUP, frozenset(dup_call_samples), 0.0, num_bins])
 
         events_df = pd.DataFrame(events_list, columns=Callset.JOINT_CALLSET_COLUMNS)
         events_df.astype(Callset.JOINT_CALLSET_COLUMN_TYPES)
@@ -346,4 +363,4 @@ class XHMMCallset(Callset):
         return cls(sample_to_pyrange_map, joint_callset_pr, interval_collection)
 
     def get_name(self):
-        return "XHMM callset"
+        return "XHMM_callset"

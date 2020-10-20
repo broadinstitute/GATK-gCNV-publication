@@ -19,9 +19,15 @@ class PerEventEvaluator:
 
         # Calculate precision
         for validated_event in self.callset.get_event_generator(self.sample_list_to_eval, min_quality_threshold):
+            if validated_event.interval.chrom == "chrX" or validated_event.interval.chrom == "chrY":
+                continue
             overlapping_truth_events = self.truth_callset.get_overlapping_events_for_sample(validated_event.interval,
                                                                                             validated_event.sample)
             overlapping_truth_event_best_match = validated_event.find_event_with_largest_overlap(overlapping_truth_events)
+            if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Quality'] < 50 and validated_event.event_type == EventType.DUP:
+                continue
+            if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Quality'] < 100 and validated_event.event_type == EventType.DEL:
+                continue
             if overlapping_truth_event_best_match:
                 if overlapping_truth_event_best_match.call_attributes['Frequency'] > 0.01:
                     continue
@@ -32,18 +38,32 @@ class PerEventEvaluator:
 
         # Calculate recall
         for truth_event in self.truth_callset.get_event_generator(self.sample_list_to_eval):
+            if truth_event.interval.chrom == "chrX" or truth_event.interval.chrom == "chrY":
+                continue
             if truth_event.call_attributes['Frequency'] > 0.01:
                 continue
             overlapping_gcnv_events = self.callset.get_overlapping_events_for_sample(truth_event.interval, truth_event.sample)
-            overlapping_gcnv_events = [e for e in overlapping_gcnv_events if e.call_attributes['Quality'] >= min_quality_threshold]
+            #overlapping_gcnv_events = [e for e in overlapping_gcnv_events if e.call_attributes['Quality'] >= min_quality_threshold]
             if not overlapping_gcnv_events:
                 evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False)
             else:
                 overlapping_gcnv_event_best_match = truth_event.find_event_with_largest_overlap(overlapping_gcnv_events)
-                if overlapping_gcnv_event_best_match.event_type == truth_event.event_type:
-                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], True)
-                else:
-                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False)
+                if self.callset.get_name() == "gCNV_callset" and overlapping_gcnv_event_best_match.call_attributes[
+                    'Quality'] < 50 and overlapping_gcnv_event_best_match.event_type == EventType.DUP:
+                    event_validates = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)
+                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], event_validates)
+                    continue
+                if self.callset.get_name() == "gCNV_callset" and overlapping_gcnv_event_best_match.call_attributes[
+                    'Quality'] < 100 and overlapping_gcnv_event_best_match.event_type == EventType.DEL:
+                    event_validates = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)
+                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], event_validates)
+                    continue
+                event_validates = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)
+                evaluation_result.update_recall(truth_event.call_attributes['NumBins'], event_validates)
+                # if overlapping_gcnv_event_best_match.event_type == truth_event.event_type:
+                #     evaluation_result.update_recall(truth_event.call_attributes['NumBins'], True)
+                # else:
+                #     evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False)
             overlapping_gcnv_event_best_match = truth_event.find_event_with_largest_overlap(overlapping_gcnv_events)
             # if overlapping_gcnv_event_best_match:
             #     event_validates = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)

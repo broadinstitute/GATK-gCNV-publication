@@ -7,6 +7,7 @@ workflow EvaluateCNVCallset {
     #### required files ###########
     ###############################
     Array[File]+ genotyped_segments_vcfs
+    File xhmm_vcf
     File truth_bed
     File analyzed_intervals
     String gcnv_evaluation_docker
@@ -27,6 +28,7 @@ workflow EvaluateCNVCallset {
     call EvaluateCalls {
         input:
             genotyped_segments_vcfs = genotyped_segments_vcfs,
+            xhmm_vcf = xhmm_vcf,
             truth_bed = truth_bed,
             analyzed_intervals = analyzed_intervals,
             gcnv_evaluation_docker = gcnv_evaluation_docker,
@@ -43,6 +45,7 @@ workflow EvaluateCNVCallset {
 
 task EvaluateCalls {
     Array[File]+ genotyped_segments_vcfs
+    File xhmm_vcf
     File truth_bed
     File analyzed_intervals
     String gcnv_eval_script
@@ -64,6 +67,7 @@ task EvaluateCalls {
 
         python ${gcnv_eval_script} \
           --output_dir "./plots/" \
+          --xhmm_vcf ${xhmm_vcf} \
           --gcnv_segment_vcfs ${sep=' ' genotyped_segments_vcfs} \
           --sorted_truth_calls_bed ${truth_bed} \
           --analyzed_intervals ${analyzed_intervals} \

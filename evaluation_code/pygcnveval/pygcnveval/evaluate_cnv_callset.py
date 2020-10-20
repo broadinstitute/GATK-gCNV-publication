@@ -21,12 +21,14 @@ def evaluate_cnv_callsets_and_plot_results(analyzed_intervals: str, truth_callse
     print("Reading in truth callset...", flush=True)
     truth_callset = TruthCallset.read_in_callset(truth_callset_bed_file=truth_callset_bed,
                                                  interval_collection=interval_collection,
-                                                 samples_to_keep=xhmm_callset.sample_set)
+                                                 samples_to_keep=gcnv_callset.sample_set)
     print("Filtering truth callset...", flush=True)
     truth_callset.filter_out_uncovered_events(interval_collection)
-    #plotting.plot_and_save_callset_event_distribution_plots(gcnv_callset, "GCNV callset", output_directory)
-    #plotting.plot_and_save_callset_event_distribution_plots(xhmm_callset, "XHMM callset", output_directory)
-    #plotting.plot_and_save_callset_event_distribution_plots(truth_callset, "Truth callset", output_directory)
+    print("Filtering XHMM callset...", flush=True)
+    xhmm_callset.filter_out_uncovered_events(interval_collection)
+    plotting.plot_and_save_callset_event_distribution_plots(gcnv_callset, output_directory)
+    plotting.plot_and_save_callset_event_distribution_plots(truth_callset, output_directory)
+    plotting.plot_and_save_callset_event_distribution_plots(xhmm_callset, output_directory)
 
 
     rare_intervals_subset = truth_callset.subset_intervals_to_rare_regions(interval_collection,
@@ -44,6 +46,7 @@ def evaluate_cnv_callsets_and_plot_results(analyzed_intervals: str, truth_callse
                                                                                                    min_quality_threshold=min_sq_threshold)
     plotting.plot_and_save_per_event_evaluation_results([per_event_evaluation_result_gcnv,
                                                          per_event_evaluation_result_xhmm], output_directory)
+
 
     #print("Performing per bin evaluation...", flush=True)
     #per_bin_evaluator = PerBinEvaluator(truth_callset=truth_callset, gcnv_callset=gcnv_callset,

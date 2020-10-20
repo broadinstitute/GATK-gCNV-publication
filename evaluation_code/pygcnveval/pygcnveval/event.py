@@ -1,6 +1,6 @@
 from enum import Enum
 from interval import Interval
-from typing import List
+from typing import List, Set
 
 
 class EventType(Enum):
@@ -80,3 +80,15 @@ class Event:
             return None
         events_reciprocal_overlaps = [self.interval.get_reciprocal_overlap(event.interval) for event in event_list]
         return event_list[events_reciprocal_overlaps.index(max(events_reciprocal_overlaps))]
+
+
+class Allele:
+    """Stores an event type and call qualities for a single interval and single sample"""
+
+    def __init__(self, interval: Interval, event_type: EventType, overlapping_target_set: Set[Interval],
+                 sample_to_call_attributes_map: dict):
+        self.interval = interval
+        self.event_type = event_type
+        self.overlapping_target_set = overlapping_target_set
+        self.sample_to_call_attributes_map = sample_to_call_attributes_map
+

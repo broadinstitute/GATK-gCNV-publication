@@ -30,6 +30,18 @@ def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerE
     def sum_over_dict(d: dict, last_index: int, bins: list):
         return sum([d[i] for i in bins[last_index:]])
 
+    #calculate precision, recall and f-1 scores
+    precisions_for_bins, recall_for_bins, f_1_for_bins = [], [], []
+    for index, evaluation_result in enumerate(evaluation_result_list):
+        tp = evaluation_result.precision_size_to_tp
+        fp = evaluation_result.precision_size_to_fp
+        precisions_for_bins.append([sum_over_dict(tp, i, bins) / max(1., (sum_over_dict(tp, i, bins)+sum_over_dict(fp, i, bins))) for i in bins])
+        tp = evaluation_result.recall_size_to_tp
+        fn = evaluation_result.recall_size_to_fn
+        recall_for_bins.append([sum_over_dict(tp, i, bins) / max(1., (sum_over_dict(tp, i, bins) + sum_over_dict(fn, i, bins))) for i in bins])
+        f_1_for_bins.append([2 / ((1. / recall_for_bins[index][i]) + (1. / precisions_for_bins[index][i])) for i in bins])
+
+    # Plot precision
     gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[1, 1.8])
     fig = plt.figure(figsize=(10, 8))
     ax1 = fig.add_subplot(gs[0, :])
@@ -37,15 +49,14 @@ def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerE
     num_results = len(evaluation_result_list)
     width = 0.8 / num_results
     offsets = np.linspace(-width / 2, width / 2, num_results) if num_results > 1 else [0]
+
     for index, evaluation_result in enumerate(evaluation_result_list):
-        # Plot precision
         tp = evaluation_result.precision_size_to_tp
         fp = evaluation_result.precision_size_to_fp
-        # precisions_for_bins = [tp[i] / (tp[i] + fp[i]) for i in bins]
-        precisions_for_bins = [sum_over_dict(tp, i, bins)/(sum_over_dict(tp, i, bins)+sum_over_dict(fp, i, bins)) for i in bins]
+
         called_events_in_bins = [tp[i] + fp[i] for i in bins]
         ax1.bar(np.array(bins) + offsets[index], called_events_in_bins, width=width)
-        ax2.scatter(bins, precisions_for_bins, label=evaluation_result.tool_name)
+        ax2.scatter(bins, precisions_for_bins[index], label=evaluation_result.tool_name)
 
     ax1.set_title("Precision stratified by number of overlapping bins")
     ax1.set_ylabel("Number called events")
@@ -57,19 +68,14 @@ def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerE
     plt.savefig(os.path.join(output_directory, "precision.png"))
     plt.close()
 
+    # Plot recall
     gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[1, 1.8])
     fig = plt.figure(figsize=(10, 8))
     ax1 = fig.add_subplot(gs[0, :])
     ax2 = fig.add_subplot(gs[1, :])
 
-    for evaluation_result in evaluation_result_list:
-        # Plot recall
-        tp = evaluation_result.recall_size_to_tp
-        fn = evaluation_result.recall_size_to_fn
-        # recall_for_bins = [tp[i] / (tp[i] + fn[i]) for i in bins]
-        recall_for_bins = [sum_over_dict(tp, i, bins) / (sum_over_dict(tp, i, bins) + sum_over_dict(fn, i, bins)) for i
-                           in bins]
-        ax2.scatter(bins, recall_for_bins, label=evaluation_result.tool_name)
+    for index, evaluation_result in enumerate(evaluation_result_list):
+        ax2.scatter(bins, recall_for_bins[index], label=evaluation_result.tool_name)
 
     true_events_in_bins = [evaluation_result_list[0].recall_size_to_tp[i]
                            + evaluation_result_list[0].recall_size_to_fn[i] for i in bins]
@@ -89,8 +95,25 @@ def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerE
     plt.savefig(os.path.join(output_directory, "recall.png"))
     plt.close()
 
+    # Plot f-1 score
+    gs = gridspec.GridSpec(nrows=1, ncols=1)
+    fig = plt.figure(figsize=(10, 8))
+    ax1 = fig.add_subplot(gs[0, :])
+    for index, evaluation_result in enumerate(evaluation_result_list):
+        ax1.scatter(bins, f_1_for_bins[index], label=evaluation_result.tool_name)
 
-def plot_and_save_callset_event_distribution_plots(callset_: Callset, callset_name: str, output_directory: str):
+    ax1.set_title("f-1 score stratified by number of overlapping bins")
+    ax1.set_xlabel(">= number of bins")
+    ax1.set_ylabel("f-1 score")
+    ax1.set_ylim(0, 1.)
+    ax1.legend()
+
+    plt.savefig(os.path.join(output_directory, "f_1.png"))
+    plt.close()
+
+
+def plot_and_save_callset_event_distribution_plots(callset_: Callset, output_directory: str):
+    callset_name = callset_.get_name()
     callset_num_events_distr = callset_.get_callset_num_events_distribution()
     plt.hist(callset_num_events_distr, bins=(int(max(callset_num_events_distr) / 2)))
     plt.xlabel('Number of events')
