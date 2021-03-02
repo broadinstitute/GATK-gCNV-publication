@@ -1,31 +1,71 @@
 import numpy as np
+import pandas as pd
+import os
+from typing import List, Optional
+
+from interval import Interval
+from event import EventType
 
 
 class PerEventEvaluationResult:
     DEFAULT_EVENT_SIZE_BINS = list(range(25))
+    RESULT_COLUMNS = ["Chromosome", "Start", "End", "Genotype", "NumBins", "ClassificationStatus", "ClassificationReason", "Samples"]
 
     def __init__(self, tool_name: str, event_size_bins=DEFAULT_EVENT_SIZE_BINS):
         self.event_size_bins = event_size_bins
         self.tool_name = tool_name
+        self.precision_results_df = pd.DataFrame(columns=PerEventEvaluationResult.RESULT_COLUMNS)
+        self.recall_results_df = pd.DataFrame(columns=PerEventEvaluationResult.RESULT_COLUMNS)
+
         self.precision_size_to_tp = {i: 0 for i in event_size_bins}
         self.precision_size_to_fp = {i: 0 for i in event_size_bins}
 
         self.recall_size_to_tp = {i: 0 for i in event_size_bins}
         self.recall_size_to_fn = {i: 0 for i in event_size_bins}
 
-    def update_precision(self, num_intervals: int, event_valid: bool):
-        index = min(num_intervals - 1, len(self.event_size_bins) - 1)
-        if event_valid:
-            self.precision_size_to_tp[index] += 1
-        else:
-            self.precision_size_to_fp[index] += 1
+    def update_precision(self, num_bins: int, event_valid: Optional[bool], event_type: EventType, interval: Interval, reason: str, sample_list: List[str]):
+        classification_status = "NA" if event_valid is None else ("TP" if event_valid else "FP")
+        classification_reason = reason if reason is not None else "NA"
+        self.precision_results_df = self.precision_results_df.append({"Chromosome": interval.chrom,
+                                                                      "Start": interval.start,
+                                                                      "End": interval.end,
+                                                                      "Genotype": event_type.name,
+                                                                      "NumBins": num_bins,
+                                                                      "ClassificationStatus": classification_status,
+                                                                      "ClassificationReason": classification_reason,
+                                                                      "Samples": ",".join(sample_list)},
+                                                                     ignore_index=True)
+        if event_valid is not None:
+            index = min(num_bins - 1, len(self.event_size_bins) - 1)
+            if event_valid:
+                self.precision_size_to_tp[index] += 1
+            else:
+                self.precision_size_to_fp[index] += 1
 
-    def update_recall(self, num_intervals: int, event_valid: bool):
-        index = min(num_intervals - 1, len(self.event_size_bins) - 1)
-        if event_valid:
-            self.recall_size_to_tp[index] += 1
-        else:
-            self.recall_size_to_fn[index] += 1
+    def update_recall(self, num_bins: int, event_valid: Optional[bool], event_type: EventType, interval: Interval, reason: str, sample_list: List[str]):
+        classification_status = "NA" if event_valid is not None else ("TP" if event_valid else "FP")
+        classification_reason = reason if reason is not None else "NA"
+        self.recall_results_df = self.recall_results_df.append({"Chromosome": interval.chrom,
+                                                                "Start": interval.start,
+                                                                "End": interval.end,
+                                                                "Genotype": event_type.name,
+                                                                "NumBins": num_bins,
+                                                                "ClassificationStatus": classification_status,
+                                                                "ClassificationReason": classification_reason,
+                                                                "Samples": ",".join(sample_list)},
+                                                               ignore_index=True)
+        if event_valid is not None:
+            index = min(num_bins - 1, len(self.event_size_bins) - 1)
+            if event_valid:
+                self.recall_size_to_tp[index] += 1
+            else:
+                self.recall_size_to_fn[index] += 1
+
+    def write_to_file(self, path: str):
+        precision_file_output = os.path.join(path, self.tool_name + ".precision.confusion_table.tsv")
+        self.precision_results_df.to_csv(path_or_buf=open(precision_file_output, 'w'), sep='\t', index=False)
+        recall_file_output = os.path.join(path, self.tool_name + ".recall.confusion_table.tsv")
+        self.recall_results_df.to_csv(path_or_buf=open(recall_file_output, 'w'), sep='\t', index=False)
 
     def __eq__(self, other):
         if isinstance(other, PerEventEvaluationResult):

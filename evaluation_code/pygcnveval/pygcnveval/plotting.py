@@ -35,9 +35,13 @@ def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerE
     for index, evaluation_result in enumerate(evaluation_result_list):
         tp = evaluation_result.precision_size_to_tp
         fp = evaluation_result.precision_size_to_fp
+        print(tp)
+        print(fp)
         precisions_for_bins.append([sum_over_dict(tp, i, bins) / max(1., (sum_over_dict(tp, i, bins)+sum_over_dict(fp, i, bins))) for i in bins])
         tp = evaluation_result.recall_size_to_tp
         fn = evaluation_result.recall_size_to_fn
+        print(tp)
+        print(fn)
         recall_for_bins.append([sum_over_dict(tp, i, bins) / max(1., (sum_over_dict(tp, i, bins) + sum_over_dict(fn, i, bins))) for i in bins])
         f_1_for_bins.append([2 / ((1. / recall_for_bins[index][i]) + (1. / precisions_for_bins[index][i])) for i in bins])
 
@@ -79,10 +83,10 @@ def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerE
 
     true_events_in_bins = [evaluation_result_list[0].recall_size_to_tp[i]
                            + evaluation_result_list[0].recall_size_to_fn[i] for i in bins]
-    for evaluation_result in evaluation_result_list:
-        assert true_events_in_bins == [evaluation_result.recall_size_to_tp[i]
-                                       + evaluation_result.recall_size_to_fn[i] for i in bins],\
-            "Subset of considered truth events was not same for all evaluated tools."
+    # for evaluation_result in evaluation_result_list:
+    #     assert true_events_in_bins == [evaluation_result.recall_size_to_tp[i]
+    #                                    + evaluation_result.recall_size_to_fn[i] for i in bins],\
+    #         "Subset of considered truth events was not same for all evaluated tools."
 
     ax1.bar(bins, true_events_in_bins)
     ax1.set_title("Recall stratified by number of overlapping bins")

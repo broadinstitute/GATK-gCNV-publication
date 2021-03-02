@@ -1,5 +1,6 @@
 from callset import CallsetMatrixView, Callset, GCNVCallset, TruthCallset
 from interval_collection import IntervalCollection
+from interval import Interval
 from event import EventType
 import pandas as pd
 import pyranges as pr
@@ -7,19 +8,31 @@ import numpy as np
 
 pd.set_option("display.max_rows", None, "display.max_columns", None)
 
-# analyzed intervals
-ANALYZED_INTERVALS = "./test_files/analyzed_intervals.interval_list"
+# analyzed intervals original
+ANALYZED_INTERVALS_ORIGINAL = "./test_files/analyzed_intervals.interval_list"
+
+# analyzed intervals random
+ANALYZED_INTERVALS_RANDOM = "./test_files/analyzed_intervals.not.subset.interval_list"
 
 # gCNV test callset resources
-GCNV_CALLSET_TEST_VCF = "./test_files/GCNV_SAMPLE_1.vcf"
-GCNV_CALLSET_TEST_VALUES = [('1', 1001, 3000, EventType.DEL, 2, 60, 0),
-                            ('2', 4001, 5000, EventType.DUP, 1, 100, 0)]
+GCNV_CALLSET_SAMPLE_0_TEST_VCF = "./test_files/GCNV_SAMPLE_0.vcf"
+GCNV_CALLSET_SAMPLE_1_TEST_VCF = "./test_files/GCNV_SAMPLE_1.vcf"
+GCNV_CALLSET_SAMPLE_2_TEST_VCF = "./test_files/GCNV_SAMPLE_2.vcf"
+GCNV_CALLSET_SAMPLE_3_TEST_VCF = "./test_files/GCNV_SAMPLE_3.vcf"
+GCNV_CALLSET_SAMPLE_1_TEST_VALUES = [('1', 1001, 3000, EventType.DEL, 2, 60, 0),
+                                     ('2', 4001, 5000, EventType.DUP, 1, 100, 0)]
 
-GCNV_CALLSET_SAMPLE_NAME = "SAMPLE_1"
-GCNV_CALLSET_TEST_DF = pd.DataFrame(GCNV_CALLSET_TEST_VALUES, columns=Callset.CALLSET_COLUMNS)
+GCNV_CALLSET_SAMPLE_0_SAMPLE_NAME = "SAMPLE_0"
+GCNV_CALLSET_SAMPLE_1_SAMPLE_NAME = "SAMPLE_1"
+GCNV_CALLSET_SAMPLE_2_SAMPLE_NAME = "SAMPLE_2"
+GCNV_CALLSET_SAMPLE_3_SAMPLE_NAME = "SAMPLE_3"
+GCNV_CALLSET_TEST_DF = pd.DataFrame(GCNV_CALLSET_SAMPLE_1_TEST_VALUES, columns=Callset.CALLSET_COLUMNS)
 GCNV_CALLSET_TEST_DF = GCNV_CALLSET_TEST_DF.astype(Callset.CALLSET_COLUMN_TYPES)
 GCNV_CALLSET_TEST_PYRANGE_EXPECTED = pr.PyRanges(GCNV_CALLSET_TEST_DF)
 
+GCNV_FULL_CALLSET_INTERVAL_TO_TARGET_MAP_EXPECTED = {Interval("1", 1001, 3000): {'1:400-1400', '1:2500-2501'},
+                                                     Interval("1", 2001, 4000): {'1:2500-2501', '1:3500-5500'},
+                                                     Interval("1", 5001, 6000): {'1:3500-5500'}}
 
 # Truth test callset resources
 TRUTH_CALLSET_TEST_BED = "./test_files/truth.bed"
@@ -78,14 +91,20 @@ GCNV_CALLSET_MATRIX_VIEW_EXPECTED = CallsetMatrixView(GCNV_CALLSET_MATRIX_VIEW_S
 
 
 def test_gcnv_callset():
-    interval_collection = IntervalCollection.read_interval_list(ANALYZED_INTERVALS)
-    gcnv_callset_actual = GCNVCallset.read_in_callset(gcnv_segment_vcfs=[GCNV_CALLSET_TEST_VCF],
+    interval_collection = IntervalCollection.read_interval_list(ANALYZED_INTERVALS_ORIGINAL)
+    gcnv_callset_actual = GCNVCallset.read_in_callset(gcnv_segment_vcfs=[GCNV_CALLSET_SAMPLE_0_TEST_VCF,
+                                                                         GCNV_CALLSET_SAMPLE_1_TEST_VCF,
+                                                                         GCNV_CALLSET_SAMPLE_2_TEST_VCF,
+                                                                         GCNV_CALLSET_SAMPLE_3_TEST_VCF],
+                                                      gcnv_joint_vcf=None,
                                                       interval_collection=interval_collection)
-    assert gcnv_callset_actual.sample_to_pyrange_map[GCNV_CALLSET_SAMPLE_NAME].df.equals(GCNV_CALLSET_TEST_PYRANGE_EXPECTED.df)
+
+    print(gcnv_callset_actual.sample_to_pyrange_map[GCNV_CALLSET_SAMPLE_1_SAMPLE_NAME].df)
+    #assert gcnv_callset_actual.sample_to_pyrange_map[GCNV_CALLSET_SAMPLE_1_SAMPLE_NAME].df.equals(GCNV_CALLSET_TEST_PYRANGE_EXPECTED.df)
 
 
 def test_truth_callset():
-    interval_collection = IntervalCollection.read_interval_list(ANALYZED_INTERVALS)
+    interval_collection = IntervalCollection.read_interval_list(ANALYZED_INTERVALS_ORIGINAL)
     # Test callset parsing
     truth_callset_actual = TruthCallset.read_in_callset(truth_callset_bed_file=TRUTH_CALLSET_TEST_BED,
                                                         interval_collection=interval_collection,
@@ -94,18 +113,18 @@ def test_truth_callset():
     from collections import defaultdict
     interval_to_target_map = defaultdict(lambda: set())
 
-    joined_intervals = truth_callset_actual.truth_callset_pyrange.join(interval_collection.pyrange)
-    print(joined_intervals.df)
-    for k, df in joined_intervals:
-        for index, event in df.iterrows():
-            interval = Interval(event['Chromosome'], event['Start'], event['End'])
-            interval_to_target_map[interval].add(str(Interval(event['Chromosome'], event['Start_b'], event['End_b'])))
-    [print(str(i) + ":" + str(interval_to_target_map[i])) for i in interval_to_target_map.keys()]
+    # joined_intervals = truth_callset_actual.truth_callset_pyrange.join(interval_collection.pyrange)
+    # print(joined_intervals.df)
+    # for k, df in joined_intervals:
+    #     for index, event in df.iterrows():
+    #         interval = Interval(event['Chromosome'], event['Start'], event['End'])
+    #         interval_to_target_map[interval].add(str(Interval(event['Chromosome'], event['Start_b'], event['End_b'])))
+    # [print(str(i) + ":" + str(interval_to_target_map[i])) for i in interval_to_target_map.keys()]
 
     assert truth_callset_actual.truth_callset_pyrange.df.equals(TRUTH_CALLSET_TEST_PYRANGE_EXPECTED.df)
 
     # Test filtering
-    truth_callset_actual.filter_out_uncovered_events(interval_collection, min_overlap_fraction=0.3)
+    truth_callset_actual.filter_out_uncovered_events_from_joint_callset(interval_collection, min_overlap_fraction=0.3)
     assert truth_callset_actual.truth_callset_pyrange.df.equals(TRUTH_CALLSET_TEST_FILTERED_PYRANGE_EXPECTED.df)
 
     for s in truth_callset_actual.sample_set:
@@ -120,8 +139,19 @@ def test_truth_callset():
     assert rare_intervals_subset_actual.pyrange.df.equals(TRUTH_CALLSET_RARE_INTERVALS_SUBSET_PYRANGE_EXPECTED.df)
 
 
+def test_target_caching():
+    interval_collection = IntervalCollection.read_interval_list(ANALYZED_INTERVALS_RANDOM)
+    gcnv_callset_actual = GCNVCallset.read_in_callset(gcnv_segment_vcfs=[GCNV_CALLSET_SAMPLE_0_TEST_VCF,
+                                                                         GCNV_CALLSET_SAMPLE_1_TEST_VCF,
+                                                                         GCNV_CALLSET_SAMPLE_2_TEST_VCF,
+                                                                         GCNV_CALLSET_SAMPLE_3_TEST_VCF],
+                                                      gcnv_joint_vcf=None,
+                                                      interval_collection=interval_collection)
+    assert GCNV_FULL_CALLSET_INTERVAL_TO_TARGET_MAP_EXPECTED == gcnv_callset_actual.cached_interval_to_targets_map
+
+
 def test_sample_by_interval_matrix():
-    interval_collection = IntervalCollection.read_interval_list(ANALYZED_INTERVALS)
+    interval_collection = IntervalCollection.read_interval_list(ANALYZED_INTERVALS_ORIGINAL)
     # Test callset parsing
     truth_callset = TruthCallset.read_in_callset(truth_callset_bed_file=TRUTH_CALLSET_TEST_BED,
                                                  interval_collection=interval_collection,
@@ -138,7 +168,8 @@ def test_sample_by_interval_matrix():
 
 def main():
     test_gcnv_callset()
-    test_truth_callset()
+    #test_truth_callset()
+    #test_target_caching()
     #test_sample_by_interval_matrix()
 
 

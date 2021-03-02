@@ -16,61 +16,155 @@ class PerEventEvaluator:
     def evaluate_callset_against_the_truth(self, minimum_overlap: float = 0.2,
                                            min_quality_threshold: int = 30) -> PerEventEvaluationResult:
         evaluation_result = PerEventEvaluationResult(self.callset.get_name())
-
         # Calculate precision
         for validated_event in self.callset.get_event_generator(self.sample_list_to_eval, min_quality_threshold):
-            if validated_event.interval.chrom == "chrX" or validated_event.interval.chrom == "chrY":
-                continue
-            overlapping_truth_events = self.truth_callset.get_overlapping_events_for_sample(validated_event.interval,
-                                                                                            validated_event.sample)
-            overlapping_truth_event_best_match = validated_event.find_event_with_largest_overlap(overlapping_truth_events)
+
             if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Quality'] < 50 and validated_event.event_type == EventType.DUP:
                 continue
             if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Quality'] < 100 and validated_event.event_type == EventType.DEL:
                 continue
+
+            if self.callset.get_name() == "XHMM_callset" and validated_event.call_attributes['Quality'] < 60:
+                continue
+
+            if validated_event.interval.chrom == "chrX" or validated_event.interval.chrom == "chrY" or validated_event.interval.chrom == "X" or validated_event.interval.chrom == "Y":
+                continue
+
+            if self.callset.get_name() == "XHMM_callset" and validated_event.call_attributes['Frequency'] > 0.02:
+                continue
+            # check if event is common
+            if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Frequency'] > 0.05:
+                continue
+
+            overlapping_truth_events = self.truth_callset.get_overlapping_events_for_sample(validated_event.interval,
+                                                                                            validated_event.sample)
+            overlapping_truth_event_best_match = validated_event.find_event_with_largest_overlap(overlapping_truth_events)
+
             if overlapping_truth_event_best_match:
                 if overlapping_truth_event_best_match.call_attributes['Frequency'] > 0.01:
+                    evaluation_result.update_precision(validated_event.call_attributes['NumBins'], None,
+                                                       validated_event.event_type, validated_event.interval,
+                                                       "FILTERED_HIGH_TRUTH_AF", list([validated_event.sample]))
                     continue
-                event_validates = validated_event.compare_to(overlapping_truth_event_best_match, minimum_overlap)
-                evaluation_result.update_precision(validated_event.call_attributes['NumBins'], event_validates)
+                event_validates, rejection_reason = validated_event.compare_to(overlapping_truth_event_best_match, minimum_overlap)
+                evaluation_result.update_precision(validated_event.call_attributes['NumBins'], event_validates,
+                                                   validated_event.event_type, validated_event.interval,
+                                                   rejection_reason, list([validated_event.sample]))
             else:
-                evaluation_result.update_precision(validated_event.call_attributes['NumBins'], False)
+                evaluation_result.update_precision(validated_event.call_attributes['NumBins'], False,
+                                                   validated_event.event_type, validated_event.interval,
+                                                   "NO_OVERLAPPING_EVENT_FOUND", list([validated_event.sample]))
 
         # Calculate recall
         for truth_event in self.truth_callset.get_event_generator(self.sample_list_to_eval):
-            if truth_event.interval.chrom == "chrX" or truth_event.interval.chrom == "chrY":
+            if truth_event.interval.chrom == "chrX" or truth_event.interval.chrom == "chrY" or truth_event.interval.chrom == "X" or truth_event.interval.chrom == "Y":
                 continue
             if truth_event.call_attributes['Frequency'] > 0.01:
                 continue
             overlapping_gcnv_events = self.callset.get_overlapping_events_for_sample(truth_event.interval, truth_event.sample)
-            #overlapping_gcnv_events = [e for e in overlapping_gcnv_events if e.call_attributes['Quality'] >= min_quality_threshold]
+
             if not overlapping_gcnv_events:
-                evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False)
+                evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False,
+                                                truth_event.event_type, truth_event.interval,
+                                                "NO_OVERLAPPING_EVENT_FOUND", list([truth_event.sample]))
             else:
                 overlapping_gcnv_event_best_match = truth_event.find_event_with_largest_overlap(overlapping_gcnv_events)
                 if self.callset.get_name() == "gCNV_callset" and overlapping_gcnv_event_best_match.call_attributes[
-                    'Quality'] < 50 and overlapping_gcnv_event_best_match.event_type == EventType.DUP:
-                    event_validates = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)
-                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], event_validates)
+                        'Quality'] < 50 and overlapping_gcnv_event_best_match.event_type == EventType.DUP:
+                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False,
+                                                    truth_event.event_type, truth_event.interval,
+                                                    "FILTERED_LOW_QUAL", list([truth_event.sample]))
                     continue
                 if self.callset.get_name() == "gCNV_callset" and overlapping_gcnv_event_best_match.call_attributes[
-                    'Quality'] < 100 and overlapping_gcnv_event_best_match.event_type == EventType.DEL:
-                    event_validates = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)
-                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], event_validates)
+                        'Quality'] < 100 and overlapping_gcnv_event_best_match.event_type == EventType.DEL:
+                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False,
+                                                    truth_event.event_type, truth_event.interval,
+                                                    "FILTERED_LOW_QUAL", list([truth_event.sample]))
                     continue
-                event_validates = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)
-                evaluation_result.update_recall(truth_event.call_attributes['NumBins'], event_validates)
-                # if overlapping_gcnv_event_best_match.event_type == truth_event.event_type:
-                #     evaluation_result.update_recall(truth_event.call_attributes['NumBins'], True)
-                # else:
-                #     evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False)
-            overlapping_gcnv_event_best_match = truth_event.find_event_with_largest_overlap(overlapping_gcnv_events)
-            # if overlapping_gcnv_event_best_match:
-            #     event_validates = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)
-            #     evaluation_result.update_recall(truth_event.call_attributes['NumBins'], event_validates)
-            # else:
-            #     evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False)
 
+                if self.callset.get_name() == "XHMM_callset" and overlapping_gcnv_event_best_match.call_attributes['Frequency'] > 0.02:
+                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False,
+                                                    truth_event.event_type, truth_event.interval,
+                                                    "FILTERED_HIGH_AF", list([truth_event.sample])) # TODO refactor
+                    continue
+                if self.callset.get_name() == "XHMM_callset" and overlapping_gcnv_event_best_match.call_attributes['Quality'] < 60:
+                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False,
+                                                    truth_event.event_type, truth_event.interval,
+                                                    "FILTERED_LOW_QUAL", list([truth_event.sample]))  # TODO refactor
+                    continue
+
+                if self.callset.get_name() == "gCNV_callset" and overlapping_gcnv_event_best_match.call_attributes['Frequency'] > 0.05:
+                    evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False, truth_event.event_type,
+                                                    truth_event.interval, "HMM", list([truth_event.sample]))
+                    continue
+                event_validates, rejection_reason = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)
+                evaluation_result.update_recall(truth_event.call_attributes['NumBins'], event_validates,
+                                                truth_event.event_type, truth_event.interval,
+                                                rejection_reason, list([truth_event.sample]))
+
+        return evaluation_result
+
+
+class PerSiteEvaluator:
+
+    def __init__(self, truth_callset: TruthCallset, callset: Callset):
+        self.truth_callset = truth_callset
+        self.callset = callset
+        self.sample_list_to_eval = list(self.truth_callset.sample_set & self.callset.sample_set)
+
+    def evaluate_callset_against_the_truth(self) -> PerEventEvaluationResult:
+        evaluation_result = PerEventEvaluationResult(self.callset.get_name())
+        overall_events = 0
+        # Calculate precision
+        for validated_allele in self.callset.get_allele_generator():
+
+            if len(validated_allele.sample_set.intersection(set(self.sample_list_to_eval))) == 0:
+                continue
+            if validated_allele.interval.chrom == "chrX" or validated_allele.interval.chrom == "chrY":
+                continue
+            overall_events += len(validated_allele.sample_set)
+            overlapping_truth_alleles = self.truth_callset.get_overlapping_alleles(validated_allele.interval)
+            overlapping_truth_allele_best_match = validated_allele.find_allele_with_largest_overlap(
+                overlapping_truth_alleles)
+
+            if overlapping_truth_allele_best_match:
+                if overlapping_truth_allele_best_match.allele_attributes['Frequency'] > 0.01:
+                    evaluation_result.update_precision(validated_allele.allele_attributes['NumBins'], None,
+                                                       validated_allele.event_type, validated_allele.interval,
+                                                       "FILTERED_HIGH_TRUTH_AF", list(validated_allele.sample_set))
+                    continue
+                allele_validates, rejection_reason = validated_allele.compare_to(overlapping_truth_allele_best_match, 0.2, 0.2, set(self.sample_list_to_eval))
+                evaluation_result.update_precision(validated_allele.allele_attributes['NumBins'], allele_validates,
+                                                   validated_allele.event_type, validated_allele.interval,
+                                                   rejection_reason, list(validated_allele.sample_set))
+            else:
+                evaluation_result.update_precision(validated_allele.allele_attributes['NumBins'], False,
+                                                   validated_allele.event_type, validated_allele.interval,
+                                                   "NO_OVERLAPPING_EVENT_FOUND", list(validated_allele.sample_set))
+
+        # Calculate recall
+        for truth_allele in self.truth_callset.get_allele_generator():
+            if len(truth_allele.sample_set.intersection(set(self.sample_list_to_eval))) == 0:
+                continue
+            if truth_allele.interval.chrom == "chrX" or truth_allele.interval.chrom == "chrY":
+                continue
+            if truth_allele.allele_attributes['Frequency'] > 0.01:
+                continue
+
+            overlapping_gcnv_alleles = self.callset.get_overlapping_alleles(truth_allele.interval)
+
+            if not overlapping_gcnv_alleles:
+                evaluation_result.update_recall(truth_allele.allele_attributes['NumBins'], False,
+                                                truth_allele.event_type, truth_allele.interval,
+                                                "NO_OVERLAPPING_EVENT_FOUND", list(truth_allele.sample_set))
+            else:
+                overlapping_gcnv_allele_best_match = truth_allele.find_allele_with_largest_overlap(overlapping_gcnv_alleles)
+                event_validates, rejection_reason = truth_allele.compare_to(overlapping_gcnv_allele_best_match, 0.2, 0.2, set(self.sample_list_to_eval))
+                evaluation_result.update_recall(truth_allele.allele_attributes['NumBins'], event_validates,
+                                                truth_allele.event_type, truth_allele.interval,
+                                                rejection_reason, list(truth_allele.sample_set))
+
+        print(overall_events)
         return evaluation_result
 
 

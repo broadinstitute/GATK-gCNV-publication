@@ -44,20 +44,20 @@ class Event:
         return self.interval == other.interval and self.sample == other.sample \
                  and self.event_type == other.event_type and self.call_attributes == other.call_attributes
 
-    def compare_to(self, other, minimum_target_overlap: float) -> bool:
+    def compare_to(self, other, minimum_target_overlap: float) -> (bool, str):
         """
-
         :param other: event to validate against
         :param minimum_target_overlap: minimum fraction of overlapping targets required to validate event
-        :return: whether self validates against provided event given conditions
+        :return: a tuple with a boolean representing self correctly validating against other event and reason for
+         potential validation failure
         """
         assert self.sample == other.sample
         if self.event_type != other.event_type:
-            return False
+            return False, "WRONG_GENOTYPE"
         number_overlapping_targets = len(self.overlapping_target_set.intersection(other.overlapping_target_set))
         if number_overlapping_targets / len(self.overlapping_target_set) < minimum_target_overlap:
-            return False
-        return True
+            return False, "NOT_ENOUGH_OVERLAPPING_EXONS"
+        return True, None
 
     def find_event_with_largest_overlap(self, event_list: List):
         """
@@ -67,7 +67,7 @@ class Event:
         """
         if not event_list:
             return None
-        events_overlaps = [self.interval.get_overlap(event.interval) for event in event_list]
+        events_overlaps = [self.interval.get_overlap(event.interval) if event.event_type == self.event_type else -1 for event in event_list]
         return event_list[events_overlaps.index(max(events_overlaps))]
 
     def find_event_with_largest_reciprocal_overlap(self, event_list: List):
@@ -78,17 +78,52 @@ class Event:
         """
         if not event_list:
             return None
-        events_reciprocal_overlaps = [self.interval.get_reciprocal_overlap(event.interval) for event in event_list]
+        events_reciprocal_overlaps = [self.interval.get_reciprocal_overlap(event.interval) if event.event_type == self.event_type else -1 for event in event_list]
         return event_list[events_reciprocal_overlaps.index(max(events_reciprocal_overlaps))]
 
 
 class Allele:
     """Stores an event type and call qualities for a single interval and single sample"""
 
-    def __init__(self, interval: Interval, event_type: EventType, overlapping_target_set: Set[Interval],
-                 sample_to_call_attributes_map: dict):
+    def __init__(self, interval: Interval, event_type: EventType, allele_attributes: map,
+                 overlapping_target_set: Set[Interval], sample_set: set):
         self.interval = interval
         self.event_type = event_type
+        self.allele_attributes = allele_attributes
         self.overlapping_target_set = overlapping_target_set
-        self.sample_to_call_attributes_map = sample_to_call_attributes_map
+        self.sample_set = sample_set
 
+    def compare_to(self, other, minimum_target_overlap: float, minimum_sample_overlap: float, sample_set_to_eval: set) -> (bool, str):
+        """
+
+        :param other: allele to validate against
+        :param minimum_target_overlap: minimum fraction of overlapping targets required to validate allele
+        :param minimum_sample_overlap: minimum fraction of overlapping samples required to validate allele
+        :return: a tuple with a boolean representing self correctly validating against other event and reason for
+         potential validation failure
+        """
+        if self.event_type != other.event_type:
+            return False, "WRONG_GENOTYPE"
+        number_overlapping_targets = len(self.overlapping_target_set.intersection(other.overlapping_target_set))
+        if number_overlapping_targets / len(self.overlapping_target_set) < minimum_target_overlap:
+            return False, "NOT_ENOUGH_OVERLAPPING_EXONS"
+        samples_to_keep_in_self = self.sample_set.intersection(sample_set_to_eval)
+        samples_to_keep_in_other = other.sample_set.intersection(sample_set_to_eval)
+        number_overlapping_samples = len(samples_to_keep_in_self.intersection(samples_to_keep_in_other))
+
+        if number_overlapping_samples / len(samples_to_keep_in_self) < minimum_sample_overlap:
+            return False, "NOT_ENOUGH_OVERLAPPING_SAMPLES"
+
+        return True, None
+
+    def find_allele_with_largest_overlap(self, allele_list: List):
+        """
+        TODO define a common parent to Allele and Event class and extract this method there
+        From list of alleles select one with largest overlap (not reciprocal) with interval in self
+        :param allele_list: given interval list
+        :return: allele with overlap
+        """
+        if not allele_list:
+            return None
+        alleles_overlaps = [self.interval.get_overlap(allele.interval) if allele.event_type == self.event_type else -1 for allele in allele_list]
+        return allele_list[alleles_overlaps.index(max(alleles_overlaps))]

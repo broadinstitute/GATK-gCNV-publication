@@ -43,7 +43,7 @@ def test_event_evaluator():
     truth_callset = TruthCallset.read_in_callset(truth_callset_bed_file=TRUTH_CALLSET_TEST_BED,
                                                  interval_collection=interval_collection,
                                                  samples_to_keep=gcnv_callset.sample_set)
-    truth_callset.filter_out_uncovered_events(interval_collection, min_overlap_fraction=0.3)
+    truth_callset.filter_out_uncovered_events_from_joint_callset(interval_collection, min_overlap_fraction=0.3)
     evaluator = PerEventEvaluator(truth_callset=truth_callset, callset=gcnv_callset)
     evaluation_result_actual = evaluator.evaluate_callset_against_the_truth(minimum_overlap=0.4)
     assert evaluation_result_actual == PER_EVENT_EVALUATION_RESULT_EXPECTED
