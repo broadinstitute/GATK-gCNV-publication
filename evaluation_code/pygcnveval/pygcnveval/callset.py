@@ -1,6 +1,6 @@
 import pyranges as pr
 import numpy as np
-from typing import FrozenSet, List, Generator, Optional
+from typing import FrozenSet, List, Generator, Optional, Callable
 from abc import ABC, abstractmethod
 import vcf
 import pandas as pd
@@ -59,7 +59,7 @@ class Callset(ABC):
         # TODO make cached interval map for both callset views in one go
         #self.cached_interval_to_targets_map = self._create_cached_intervals_to_target_map_joint(interval_collection)
 
-    def get_event_generator(self, sample_list: List[str], min_quality_threshold=None) -> Generator[Event, None, None]:
+    def get_event_generator(self, sample_list: List[str], event_filter: Callable[[Event], bool] = None) -> Generator[Event, None, None]:
         """
         Get a generator that yields all events in the callset, i.e. for each site it will output all non-reference
         events containing all samples at this site
@@ -69,20 +69,24 @@ class Callset(ABC):
         for sample in sample_list:
             assert sample in self.sample_set, "Queried sample (%s) is not in the callset." % sample
             for k, df in self.sample_to_pyrange_map[sample]:
-                for index, event in df.iterrows():
-                    if event['Genotype'] == EventType.REF:
+                for index, row in df.iterrows():
+                    if row['Genotype'] == EventType.REF:
                         continue
 
-                    interval = Interval(event['Chromosome'], event['Start'], event['End'])
+                    interval = Interval(row['Chromosome'], row['Start'], row['End'])
+
+                    if interval not in self.cached_interval_to_targets_map:
+                        continue
 
                     overlapping_target_set = self.cached_interval_to_targets_map[interval]
 
-                    event_type = event['Genotype']
-                    call_attributes = {'NumBins': event['NumBins'], 'Quality': event['Quality'], 'Frequency': event['Frequency']}
-                    if min_quality_threshold is None:
-                        yield Event(interval, sample, event_type, call_attributes, overlapping_target_set)
-                    if min_quality_threshold is not None and call_attributes['Quality'] >= min_quality_threshold:
-                        yield Event(interval, sample, event_type, call_attributes, overlapping_target_set)
+                    event_type = row['Genotype']
+                    call_attributes = {'NumBins': row['NumBins'], 'Quality': row['Quality'], 'Frequency': row['Frequency']}
+                    event = Event(interval, sample, event_type, call_attributes, overlapping_target_set)
+                    if event_filter is None:
+                        yield event
+                    if event_filter is not None and event_filter(event):
+                        yield event
 
     def get_allele_generator(self) -> Generator[Allele, None, None]:
         """
@@ -148,7 +152,7 @@ class Callset(ABC):
         return [Event(Interval(row['Chromosome'], row['Start'], row['End']), sample, row['Genotype'],
                       {'NumBins': row['NumBins'], 'Quality': row['Quality'], 'Frequency': row['Frequency']},
                       self.cached_interval_to_targets_map[Interval(row['Chromosome'], row['Start'], row['End'])])
-                for index, row in intersecting_calls.df.iterrows() if row["Genotype"] != EventType.REF]
+                for index, row in intersecting_calls.df.iterrows() if row["Genotype"] != EventType.REF and Interval(row['Chromosome'], row['Start'], row['End']) in self.cached_interval_to_targets_map]
 
     def get_overlapping_alleles(self, interval: Interval) -> List[Allele]:
         """
@@ -187,7 +191,7 @@ class Callset(ABC):
         return event_size_distr
 
     def filter_out_uncovered_events_from_joint_callset(self, interval_collection: IntervalCollection,
-                                    min_overlap_fraction: float = 0.00):
+                                                       min_overlap_fraction: float = 0.00):
         callset_with_coverage = self.joint_callset.coverage(interval_collection.pyrange)
         indices = callset_with_coverage.df['FractionOverlaps'] > min_overlap_fraction
         self.joint_callset = callset_with_coverage[indices].drop(['NumberOverlaps', 'FractionOverlaps'])
@@ -210,6 +214,7 @@ class Callset(ABC):
 
         joined_intervals = joined_sample_level_callset_pr.join(interval_collection.pyrange)
         joined_intervals_df = joined_intervals.df
+
         joined_intervals_df['Chromosome'] = joined_intervals_df['Chromosome'].astype('object')
 
         def construct_interval_to_targets_list_map(group: pd.DataFrame):
@@ -348,39 +353,67 @@ class GCNVCallset(Callset):
         super().__init__(sample_to_pyrange_map, joint_callset, interval_collection)
 
     @classmethod
-    def read_in_callset(cls, gcnv_segment_vcfs: List[str], gcnv_joint_vcf: Optional[str], interval_collection: IntervalCollection):
-        # Handle gzip-ed VCF gcnv files
-        new_gcnv_vcfs_list = []
-        for vcf_file in gcnv_segment_vcfs:
-            if vcf_file.endswith(".gz"):
-                new_vcf_file = vcf_file[:-3]
-                with open(new_vcf_file, 'wt') as f_out, gzip.open(vcf_file, 'rt') as f_in:
-                    shutil.copyfileobj(f_in, f_out)
-                    vcf_file = new_vcf_file
-            new_gcnv_vcfs_list.append(vcf_file)
-        gcnv_segment_vcfs = new_gcnv_vcfs_list
+    def read_in_callset(cls, gcnv_segment_vcfs: List[str], gcnv_callset_tsv: Optional[str], gcnv_joint_vcf: Optional[str],
+                        interval_collection: IntervalCollection, max_events_allowed: int = 100):
 
-        # Read in single sample vcfs
         sample_to_pyrange_map = {}
-        for vcf_file in gcnv_segment_vcfs:
-            vcf_reader = vcf.Reader(open(vcf_file, 'r'))
-            assert len(vcf_reader.samples) == 1
-            sample_name = vcf_reader.samples[0]
-            events_df_lists = []
-            for record in vcf_reader:
-                #event_type = EventType.gcnv_call_to_event_type(record.genotype(sample_name)['GT'])
-                cn = record.genotype(sample_name)['CN']
-                event_type = EventType.REF if cn == 2 else (EventType.DUP if cn > 2 else EventType.DEL)
-                if event_type == EventType.REF:
-                    continue
-                events_df_lists.append([record.CHROM, int(record.POS), int(record.INFO['END']), event_type,
-                         int(record.genotype(sample_name)['NP']), int(record.genotype(sample_name)['QS']), 0.0])
 
-            events_df = pd.DataFrame(events_df_lists, columns=Callset.CALLSET_COLUMNS)
-            if len(events_df) > 100:
-               continue
-            events_pr = pr.PyRanges(events_df)
-            sample_to_pyrange_map[sample_name] = events_pr
+        if gcnv_callset_tsv:
+            callset_df = pd.read_csv(open(gcnv_callset_tsv), sep='\t')
+
+            def _get_attribute_list(call, num_exon, qs, sf, hg38_str):
+                split_str = hg38_str.split(":")
+                contig = split_str[0]
+                start = split_str[1].split("-")[0]
+                end = split_str[1].split("-")[1]
+                event_type = EventType.get_event_type_from_svtype(call)
+                return [contig, start, end, event_type, num_exon, qs, sf]
+
+            sample_to_event_tuples = [(sample, _get_attribute_list(call, num_exon, qs, sf, hg38_str)) for
+                                      sample, call, num_exon, qs, sf, hg38_str in
+                                      zip(callset_df['sample'], callset_df['call'], callset_df['num_exon'],
+                                          callset_df['QS'], callset_df['sf'], callset_df['hg38']) if hg38_str != "NONE" and num_exon != 0]
+
+            sample_to_event_list_map = {}
+            for sample, event in sample_to_event_tuples:
+                sample_to_event_list_map.setdefault(sample, []).append(event)
+
+            for sample in sample_to_event_list_map.keys():
+                events_df = pd.DataFrame(sample_to_event_list_map[sample], columns=Callset.CALLSET_COLUMNS)
+                sample_to_pyrange_map[sample] = pr.PyRanges(events_df)
+        else:
+            # Handle gzip-ed VCF gcnv files
+            new_gcnv_vcfs_list = []
+            for vcf_file in gcnv_segment_vcfs:
+                if vcf_file.endswith(".gz"):
+                    new_vcf_file = vcf_file[:-3]
+                    with open(new_vcf_file, 'wt') as f_out, gzip.open(vcf_file, 'rt') as f_in:
+                        shutil.copyfileobj(f_in, f_out)
+                        vcf_file = new_vcf_file
+                new_gcnv_vcfs_list.append(vcf_file)
+            gcnv_segment_vcfs = new_gcnv_vcfs_list
+
+            # Read in single sample vcfs
+
+            for vcf_file in gcnv_segment_vcfs:
+                vcf_reader = vcf.Reader(open(vcf_file, 'r'))
+                assert len(vcf_reader.samples) == 1
+                sample_name = vcf_reader.samples[0]
+                events_df_lists = []
+                for record in vcf_reader:
+                    #event_type = EventType.gcnv_call_to_event_type(record.genotype(sample_name)['GT'])
+                    cn = record.genotype(sample_name)['CN']
+                    event_type = EventType.REF if cn == 2 else (EventType.DUP if cn > 2 else EventType.DEL)
+                    if event_type == EventType.REF:
+                        continue
+                    events_df_lists.append([record.CHROM, int(record.POS), int(record.INFO['END']), event_type,
+                             int(record.genotype(sample_name)['NP']), int(record.genotype(sample_name)['QS']), 0.0])
+
+                events_df = pd.DataFrame(events_df_lists, columns=Callset.CALLSET_COLUMNS)
+                if len(events_df) > max_events_allowed:
+                   continue
+                events_pr = pr.PyRanges(events_df)
+                sample_to_pyrange_map[sample_name] = events_pr
 
         # Annotate callset with AF: clustering method
         # callset_df_list = [p.df.assign(Sample=s) for s, p in sample_to_pyrange_map.items()]
@@ -395,28 +428,28 @@ class GCNVCallset(Callset):
         #     sample_to_pyrange_map[s] = pr.PyRanges(
         #         clustered_joined_callset.df.loc[clustered_joined_callset.df['Sample'] == s].drop(columns=["Sample", "Cluster"]))
 
-        # Annotate callset with AF: calculate overlaps method
-        overlaps_pr = pr.count_overlaps(sample_to_pyrange_map)
-        print(overlaps_pr.df)
-        num_samples = len(sample_to_pyrange_map)
-        sample_set = set(sample_to_pyrange_map.keys())
-        for sample in sample_set:
-            event_frequencies = []
-            for index, event in sample_to_pyrange_map[sample].df.iterrows():
-                overlapping_segments_pr = overlaps_pr[event["Chromosome"], event["Start"]:event["End"]]
-                sample_to_length_map = defaultdict(lambda: 0)
-                for i, e in overlapping_segments_pr.df.iterrows():
-                    overlap_length = e["End"] - e["Start"]
-                    for s in sample_set:
-                        if e[s]:
-                            sample_to_length_map[s] += overlap_length
-                length = event["End"] - event["Start"]
-                number_overlaps = sum(sample_to_length_map[s] / length > 0.5 for s in sample_set)
-                af = number_overlaps / num_samples
-                event_frequencies.append(af)
-                #print(sample_to_pyrange_map[sample].Frequency[index])
-            sample_to_pyrange_map[sample].Frequency = pd.Series(event_frequencies)
-        print("Done calculating AF")
+            # Annotate callset with AF: calculate overlaps method
+            overlaps_pr = pr.count_overlaps(sample_to_pyrange_map)
+            print(overlaps_pr.df)
+            num_samples = len(sample_to_pyrange_map)
+            sample_set = set(sample_to_pyrange_map.keys())
+            for sample in sample_set:
+                event_frequencies = []
+                for index, event in sample_to_pyrange_map[sample].df.iterrows():
+                    overlapping_segments_pr = overlaps_pr[event["Chromosome"], event["Start"]:event["End"]]
+                    sample_to_length_map = defaultdict(lambda: 0)
+                    for i, e in overlapping_segments_pr.df.iterrows():
+                        overlap_length = e["End"] - e["Start"]
+                        for s in sample_set:
+                            if e[s]:
+                                sample_to_length_map[s] += overlap_length
+                    length = event["End"] - event["Start"]
+                    number_overlaps = sum(sample_to_length_map[s] / length > 0.5 for s in sample_set)
+                    af = number_overlaps / num_samples
+                    event_frequencies.append(af)
+                    #print(sample_to_pyrange_map[sample].Frequency[index])
+                sample_to_pyrange_map[sample].Frequency = pd.Series(event_frequencies)
+            print("Done calculating AF")
 
         # Read in joint vcf
         joint_callset_pr = None
@@ -466,43 +499,50 @@ class XHMMCallset(Callset):
         super().__init__(sample_to_pyrange_map, joint_callset,  interval_collection)
 
     @classmethod
-    def read_in_callset(cls, xhmm_vcf: str, interval_collection: IntervalCollection, samples_to_keep: set = None):
-        vcf_reader = vcf.Reader(open(xhmm_vcf, 'r'))
-        sample_list = list(set(vcf_reader.samples).intersection(samples_to_keep))
-
-        sample_to_df_lists = {sample: [] for sample in sample_list}  # TODO refactor
+    def read_in_callset(cls, xhmm_vcfs: List[str], interval_collection: IntervalCollection, samples_to_keep: set = None):
+        assert len(xhmm_vcfs) > 0
 
         events_list = []
-        for record in vcf_reader:
-            del_call_samples = []
-            dup_call_samples = []
+        joint_sample_list = []
+        sample_to_df_lists = {}
+        for xhmm_vcf in xhmm_vcfs:
+            vcf_reader = vcf.Reader(open(xhmm_vcf, 'r'))
+            sample_list = vcf_reader.samples
+            joint_sample_list.extend(sample_list)
+            if samples_to_keep:
+                list(set(sample_list).intersection(samples_to_keep))
+            sample_to_df_lists.update({sample: [] for sample in sample_list})  # TODO refactor
 
-            chrom, start, end, num_bins = record.CHROM, int(record.POS), int(record.INFO['END']), int(record.INFO['NUMT'])
-            af = sum([float(af) for af in record.INFO['AF']])
+            for record in vcf_reader:
+                del_call_samples = []
+                dup_call_samples = []
 
-            for sample in sample_list:
-                event_type = EventType.gcnv_call_to_event_type(record.genotype(sample)['GT'])
-                if event_type == EventType.DEL:
-                    del_call_samples.append(sample)
-                    sample_to_df_lists[sample].append([chrom, start, end, event_type, num_bins, int(record.genotype(sample)['NDQ']), af]) # TODO refactor
-                if event_type == EventType.DUP:
-                    dup_call_samples.append(sample)
-                    sample_to_df_lists[sample].append([chrom, start, end, event_type, num_bins, int(record.genotype(sample)['NDQ']), af])  # TODO refactor
+                chrom, start, end, num_bins = record.CHROM, int(record.POS), int(record.INFO['END']), int(record.INFO['NUMT'])
+                af = sum([float(af) for af in record.INFO['AF']])
 
-            name_prefix = str(chrom) + "_" + str(start) + "_" + str(end) + "_"
-            af = (len(del_call_samples) + len(dup_call_samples)) / len(sample_list)  # TODO refactor
+                for sample in sample_list:
+                    event_type = EventType.gcnv_call_to_event_type(record.genotype(sample)['GT'])
+                    if event_type == EventType.DEL:
+                        del_call_samples.append(sample)
+                        sample_to_df_lists[sample].append([chrom, start, end, event_type, num_bins, int(record.genotype(sample)['NDQ']), af]) # TODO refactor
+                    if event_type == EventType.DUP:
+                        dup_call_samples.append(sample)
+                        sample_to_df_lists[sample].append([chrom, start, end, event_type, num_bins, int(record.genotype(sample)['NDQ']), af])  # TODO refactor
 
-            if del_call_samples:
-                events_list.append([chrom, start, end, name_prefix + "DEL", EventType.DEL, frozenset(del_call_samples), af, num_bins])
-            if dup_call_samples:
-                events_list.append([chrom, start, end, name_prefix + "DUP", EventType.DUP, frozenset(dup_call_samples), af, num_bins])
+                name_prefix = str(chrom) + "_" + str(start) + "_" + str(end) + "_"
+                af = (len(del_call_samples) + len(dup_call_samples)) / len(sample_list)  # TODO refactor
+
+                if del_call_samples:
+                    events_list.append([chrom, start, end, name_prefix + "DEL", EventType.DEL, frozenset(del_call_samples), af, num_bins])
+                if dup_call_samples:
+                    events_list.append([chrom, start, end, name_prefix + "DUP", EventType.DUP, frozenset(dup_call_samples), af, num_bins])
 
         events_df = pd.DataFrame(events_list, columns=Callset.JOINT_CALLSET_COLUMNS)
         events_df.astype(Callset.JOINT_CALLSET_COLUMN_TYPES)
         joint_callset_pr = pr.PyRanges(events_df)
 
         sample_to_pyrange_map = {}  # TODO refactor
-        for sample in sample_list:
+        for sample in joint_sample_list:
             sample_df = pd.DataFrame(sample_to_df_lists[sample], columns=Callset.CALLSET_COLUMNS)
             sample_df.astype(Callset.CALLSET_COLUMN_TYPES)
             sample_to_pyrange_map[sample] = pr.PyRanges(sample_df) # TODO refactor

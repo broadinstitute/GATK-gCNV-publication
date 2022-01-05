@@ -43,7 +43,7 @@ class PerEventEvaluationResult:
                 self.precision_size_to_fp[index] += 1
 
     def update_recall(self, num_bins: int, event_valid: Optional[bool], event_type: EventType, interval: Interval, reason: str, sample_list: List[str]):
-        classification_status = "NA" if event_valid is not None else ("TP" if event_valid else "FP")
+        classification_status = "NA" if event_valid is None else ("TP" if event_valid else "FN")
         classification_reason = reason if reason is not None else "NA"
         self.recall_results_df = self.recall_results_df.append({"Chromosome": interval.chrom,
                                                                 "Start": interval.start,

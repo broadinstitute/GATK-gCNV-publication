@@ -1,4 +1,5 @@
 import numpy as np
+from typing import List
 
 from event import EventType
 from callset import TruthCallset, GCNVCallset, Callset
@@ -8,33 +9,55 @@ from interval_collection import IntervalCollection
 
 class PerEventEvaluator:
 
-    def __init__(self, truth_callset: TruthCallset, callset: Callset):
+    def __init__(self, truth_callset: TruthCallset, callset: Callset, sample_list_to_evaluate: List):
         self.truth_callset = truth_callset
         self.callset = callset
-        self.sample_list_to_eval = list(self.truth_callset.sample_set & self.callset.sample_set)
+        assert set(sample_list_to_evaluate).issubset(self.truth_callset.sample_set)
+        assert set(sample_list_to_evaluate).issubset(self.callset.sample_set)
+        self.sample_list_to_eval = sample_list_to_evaluate
 
     def evaluate_callset_against_the_truth(self, minimum_overlap: float = 0.2,
-                                           min_quality_threshold: int = 30) -> PerEventEvaluationResult:
+                                           gcnv_sq_min_del: int = 100, gcnv_sq_min_dup: int = 50) -> PerEventEvaluationResult:
         evaluation_result = PerEventEvaluationResult(self.callset.get_name())
+
+        # construct callset filter
+        def gcnv_calls_filter(e):
+            is_allosome = e.interval.chrom == "chrX" or e.interval.chrom == "chrY" \
+                          or e.interval.chrom == "X" or e.interval.chrom == "Y"
+            return not is_allosome and (e.call_attributes['Frequency'] <= 0.02) \
+                   and ((e.call_attributes['Quality'] >= gcnv_sq_min_del and e.event_type == EventType.DEL)
+                        or (e.call_attributes['Quality'] >= gcnv_sq_min_dup and e.event_type == EventType.DUP))
+
+        def xhmm_calls_filter(e):
+            is_allosome = e.interval.chrom == "chrX" or e.interval.chrom == "chrY" \
+                          or e.interval.chrom == "X" or e.interval.chrom == "Y"
+            return not is_allosome and (e.call_attributes['Frequency'] <= 0.02) and (e.call_attributes['Quality'] >= 60)
+
+        calls_filter = None
+        if self.callset.get_name() == "gCNV_callset":
+            calls_filter = gcnv_calls_filter
+        elif self.callset.get_name() == "XHMM_callset":
+            calls_filter = xhmm_calls_filter
+
         # Calculate precision
-        for validated_event in self.callset.get_event_generator(self.sample_list_to_eval, min_quality_threshold):
+        for validated_event in self.callset.get_event_generator(self.sample_list_to_eval, calls_filter):
 
-            if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Quality'] < 50 and validated_event.event_type == EventType.DUP:
-                continue
-            if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Quality'] < 100 and validated_event.event_type == EventType.DEL:
-                continue
+            # if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Quality'] < 50 and validated_event.event_type == EventType.DUP:
+            #     continue
+            # if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Quality'] < 100 and validated_event.event_type == EventType.DEL:
+            #     continue
 
-            if self.callset.get_name() == "XHMM_callset" and validated_event.call_attributes['Quality'] < 60:
-                continue
-
-            if validated_event.interval.chrom == "chrX" or validated_event.interval.chrom == "chrY" or validated_event.interval.chrom == "X" or validated_event.interval.chrom == "Y":
-                continue
-
-            if self.callset.get_name() == "XHMM_callset" and validated_event.call_attributes['Frequency'] > 0.02:
-                continue
-            # check if event is common
-            if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Frequency'] > 0.05:
-                continue
+            # if self.callset.get_name() == "XHMM_callset" and validated_event.call_attributes['Quality'] < 60:
+            #     continue
+            #
+            # if validated_event.interval.chrom == "chrX" or validated_event.interval.chrom == "chrY" or validated_event.interval.chrom == "X" or validated_event.interval.chrom == "Y":
+            #     continue
+            #
+            # if self.callset.get_name() == "XHMM_callset" and validated_event.call_attributes['Frequency'] > 0.02:
+            #     continue
+            # # check if event is common
+            # if self.callset.get_name() == "gCNV_callset" and validated_event.call_attributes['Frequency'] > 0.05:
+            #     continue
 
             overlapping_truth_events = self.truth_callset.get_overlapping_events_for_sample(validated_event.interval,
                                                                                             validated_event.sample)
@@ -70,13 +93,13 @@ class PerEventEvaluator:
             else:
                 overlapping_gcnv_event_best_match = truth_event.find_event_with_largest_overlap(overlapping_gcnv_events)
                 if self.callset.get_name() == "gCNV_callset" and overlapping_gcnv_event_best_match.call_attributes[
-                        'Quality'] < 50 and overlapping_gcnv_event_best_match.event_type == EventType.DUP:
+                        'Quality'] < gcnv_sq_min_dup and overlapping_gcnv_event_best_match.event_type == EventType.DUP:
                     evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False,
                                                     truth_event.event_type, truth_event.interval,
                                                     "FILTERED_LOW_QUAL", list([truth_event.sample]))
                     continue
                 if self.callset.get_name() == "gCNV_callset" and overlapping_gcnv_event_best_match.call_attributes[
-                        'Quality'] < 100 and overlapping_gcnv_event_best_match.event_type == EventType.DEL:
+                        'Quality'] < gcnv_sq_min_del and overlapping_gcnv_event_best_match.event_type == EventType.DEL:
                     evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False,
                                                     truth_event.event_type, truth_event.interval,
                                                     "FILTERED_LOW_QUAL", list([truth_event.sample]))
@@ -93,9 +116,9 @@ class PerEventEvaluator:
                                                     "FILTERED_LOW_QUAL", list([truth_event.sample]))  # TODO refactor
                     continue
 
-                if self.callset.get_name() == "gCNV_callset" and overlapping_gcnv_event_best_match.call_attributes['Frequency'] > 0.05:
+                if self.callset.get_name() == "gCNV_callset" and overlapping_gcnv_event_best_match.call_attributes['Frequency'] > 0.02:
                     evaluation_result.update_recall(truth_event.call_attributes['NumBins'], False, truth_event.event_type,
-                                                    truth_event.interval, "HMM", list([truth_event.sample]))
+                                                    truth_event.interval, "FILTERED_HIGH_AF", list([truth_event.sample]))
                     continue
                 event_validates, rejection_reason = truth_event.compare_to(overlapping_gcnv_event_best_match, minimum_overlap)
                 evaluation_result.update_recall(truth_event.call_attributes['NumBins'], event_validates,
