@@ -30,7 +30,7 @@ def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerE
     def sum_over_dict(d: dict, last_index: int, bins: list):
         return sum([d[i] for i in bins[last_index:]])
 
-    #calculate precision, recall and f-1 scores
+    # calculate precision, recall and f-1 scores
     precisions_for_bins, recall_for_bins, f_1_for_bins = [], [], []
     for index, evaluation_result in enumerate(evaluation_result_list):
         tp = evaluation_result.precision_size_to_tp
@@ -45,7 +45,7 @@ def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerE
         recall_for_bins.append([sum_over_dict(tp, i, bins) / max(1., (sum_over_dict(tp, i, bins) + sum_over_dict(fn, i, bins))) for i in bins])
         f_1_for_bins.append([2 / ((1. / recall_for_bins[index][i]) + (1. / precisions_for_bins[index][i])) for i in bins])
 
-    # Plot precision
+    # plot precision
     gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[1, 1.8])
     fig = plt.figure(figsize=(10, 8))
     ax1 = fig.add_subplot(gs[0, :])

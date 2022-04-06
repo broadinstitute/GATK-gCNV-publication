@@ -24,13 +24,15 @@ def evaluate_cnv_callsets_and_plot_results(analyzed_intervals: str,
     print("Reading in interval list...", flush=True)
     interval_collection = IntervalCollection.read_interval_list(analyzed_intervals)
     callsets_to_evaluate = []
-    if gcnv_vcfs or gcnv_callset_tsv:
+    if gcnv_vcfs or gcnv_callset_tsv or gcnv_joint_vcf:
         print("Reading in gCNV callset...", flush=True)
         gcnv_callset = GCNVCallset.read_in_callset(gcnv_segment_vcfs=gcnv_vcfs,
                                                    gcnv_callset_tsv=gcnv_callset_tsv,
                                                    gcnv_joint_vcf=gcnv_joint_vcf,
                                                    interval_collection=interval_collection,
-                                                   max_events_allowed=gcnv_max_event_number)
+                                                   max_events_allowed=gcnv_max_event_number,
+                                                   sq_min_del=gcnv_sq_min_del,
+                                                   sq_min_dup=gcnv_sq_min_dup)
         callsets_to_evaluate.append(gcnv_callset)
 
     if xhmm_vcfs:
@@ -141,8 +143,8 @@ def main():
     gcnv_sq_min_dup = args.gcnv_min_sq_dup_threshold
     samples_to_evaluate_path = args.samples_to_evaluate_path
 
-    assert (gcnv_segment_vcfs is None) ^ (gcnv_callset_tsv is None),\
-        "Exactly one of the gCNV segment VCF list or gCNV TSV callset must be defined"
+    assert (gcnv_segment_vcfs is None) ^ (gcnv_callset_tsv is None) ^ (gcnv_segment_vcfs is None), \
+        "Exactly one of the gCNV segment VCF list or gCNV TSV callset or joint gCNV VCF must be defined"
 
     evaluate_cnv_callsets_and_plot_results(analyzed_intervals, truth_callset, gcnv_segment_vcfs, gcnv_callset_tsv, gcnv_max_event_number,
                                            gcnv_joint_vcf, xhmm_vcfs, output_dir, min_required_overlap,

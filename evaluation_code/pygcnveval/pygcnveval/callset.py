@@ -49,7 +49,7 @@ class Callset(ABC):
 
     JOINT_CALLSET_COLUMNS = ['Chromosome', 'Start', 'End', 'Name', 'Genotype', 'Samples', 'Frequency', 'NumBins']
     JOINT_CALLSET_COLUMN_TYPES = {"Chromosome": "category", "Start": "int32", "End": "int32", "Name": "object",
-                                  "Genotype": "object", "Samples": "object", "Frequency": "float64", "NumBins": "int64"}
+                                  "Genotype": "object", "Samples": "object", "Frequency": "float64", "NumBins": "int32"}
 
     def __init__(self, sample_to_pyrange_map: dict, joint_callset: pr.PyRanges, interval_collection: IntervalCollection):
         self.sample_to_pyrange_map = sample_to_pyrange_map
@@ -261,6 +261,7 @@ class Callset(ABC):
         for sample in sample_set:
             events_df = pd.DataFrame(sample_to_events_list_map[sample])
             events_df = events_df.astype(Callset.CALLSET_COLUMN_TYPES)
+            print(events_df)
             sample_to_pyrange_map[sample] = pr.PyRanges(events_df)
         return sample_to_pyrange_map
 
@@ -354,7 +355,8 @@ class GCNVCallset(Callset):
 
     @classmethod
     def read_in_callset(cls, gcnv_segment_vcfs: List[str], gcnv_callset_tsv: Optional[str], gcnv_joint_vcf: Optional[str],
-                        interval_collection: IntervalCollection, max_events_allowed: int = 100):
+                        interval_collection: IntervalCollection, max_events_allowed: int = 100,
+                        sq_min_del: int =100, sq_min_dup: int = 50):
 
         sample_to_pyrange_map = {}
 
@@ -381,7 +383,7 @@ class GCNVCallset(Callset):
             for sample in sample_to_event_list_map.keys():
                 events_df = pd.DataFrame(sample_to_event_list_map[sample], columns=Callset.CALLSET_COLUMNS)
                 sample_to_pyrange_map[sample] = pr.PyRanges(events_df)
-        else:
+        elif gcnv_segment_vcfs:
             # Handle gzip-ed VCF gcnv files
             new_gcnv_vcfs_list = []
             for vcf_file in gcnv_segment_vcfs:
@@ -458,7 +460,7 @@ class GCNVCallset(Callset):
             joint_sample_list = list(joint_vcf_reader.samples)
             events_list = []
             for record in joint_vcf_reader:
-                if record.FILTER != []:
+                if not record.FILTER:
                     continue
                 del_call_samples = []
                 dup_call_samples = []
@@ -468,25 +470,25 @@ class GCNVCallset(Callset):
                     # TODO this does not work properly for allosomal contigs but we ignore them for now
                     if record.genotype(sample)['CN']:  # check that there is a value stored in the field
                         if record.genotype(sample)['CN'] < 2:
-                            if record.genotype(sample)['QS'] >= 100:
+                            if record.genotype(sample)['QS'] >= sq_min_del:
                                 del_call_samples.append(sample)
                         elif record.genotype(sample)['CN'] > 2:
-                            if record.genotype(sample)['QS'] >= 50:
+                            if record.genotype(sample)['QS'] >= sq_min_dup:
                                 dup_call_samples.append(sample)
                 chrom, start, end, num_bins = record.CHROM, int(record.POS), int(record.INFO['END']), int(
                     record.genotype(joint_sample_list[0])['NP'])
                 name_prefix = str(chrom) + "_" + str(start) + "_" + str(end) + "_"
+                af = (len(del_call_samples) + len(dup_call_samples)) / len(joint_sample_list)
                 if del_call_samples:
-                    events_list.append([chrom, start, end, name_prefix + "DEL", EventType.DEL, frozenset(del_call_samples), 0.0, num_bins])
+                    events_list.append([chrom, start, end, name_prefix + "DEL", EventType.DEL, frozenset(del_call_samples), af, num_bins])
                 if dup_call_samples:
-                    events_list.append([chrom, start, end, name_prefix + "DUP", EventType.DUP, frozenset(dup_call_samples), 0.0, num_bins])
+                    events_list.append([chrom, start, end, name_prefix + "DUP", EventType.DUP, frozenset(dup_call_samples), af, num_bins])
             joint_events_df = pd.DataFrame(events_list, columns=Callset.JOINT_CALLSET_COLUMNS)
             joint_events_df.astype(Callset.JOINT_CALLSET_COLUMN_TYPES)
             joint_callset_pr = pr.PyRanges(joint_events_df)
 
             #sample_to_pyrange_map = {s: None for s in joint_sample_list}
-
-        #sample_to_pyrange_map = Callset._construct_sample_to_pyrange_map(joint_callset_pr, frozenset(joint_sample_list))
+            sample_to_pyrange_map = Callset._construct_sample_to_pyrange_map(joint_callset_pr, frozenset(joint_sample_list))
 
         return cls(sample_to_pyrange_map, joint_callset_pr, interval_collection)
 

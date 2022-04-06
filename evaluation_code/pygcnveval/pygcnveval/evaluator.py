@@ -64,7 +64,7 @@ class PerEventEvaluator:
             overlapping_truth_event_best_match = validated_event.find_event_with_largest_overlap(overlapping_truth_events)
 
             if overlapping_truth_event_best_match:
-                if overlapping_truth_event_best_match.call_attributes['Frequency'] > 0.01:
+                if overlapping_truth_event_best_match.call_attributes['Frequency'] > 0.02:
                     evaluation_result.update_precision(validated_event.call_attributes['NumBins'], None,
                                                        validated_event.event_type, validated_event.interval,
                                                        "FILTERED_HIGH_TRUTH_AF", list([validated_event.sample]))
@@ -82,7 +82,7 @@ class PerEventEvaluator:
         for truth_event in self.truth_callset.get_event_generator(self.sample_list_to_eval):
             if truth_event.interval.chrom == "chrX" or truth_event.interval.chrom == "chrY" or truth_event.interval.chrom == "X" or truth_event.interval.chrom == "Y":
                 continue
-            if truth_event.call_attributes['Frequency'] > 0.01:
+            if truth_event.call_attributes['Frequency'] > 0.02:
                 continue
             overlapping_gcnv_events = self.callset.get_overlapping_events_for_sample(truth_event.interval, truth_event.sample)
 
