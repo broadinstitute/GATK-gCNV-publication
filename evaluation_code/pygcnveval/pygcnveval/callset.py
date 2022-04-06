@@ -261,7 +261,6 @@ class Callset(ABC):
         for sample in sample_set:
             events_df = pd.DataFrame(sample_to_events_list_map[sample])
             events_df = events_df.astype(Callset.CALLSET_COLUMN_TYPES)
-            print(events_df)
             sample_to_pyrange_map[sample] = pr.PyRanges(events_df)
         return sample_to_pyrange_map
 
@@ -487,7 +486,6 @@ class GCNVCallset(Callset):
             joint_events_df.astype(Callset.JOINT_CALLSET_COLUMN_TYPES)
             joint_callset_pr = pr.PyRanges(joint_events_df)
 
-            #sample_to_pyrange_map = {s: None for s in joint_sample_list}
             sample_to_pyrange_map = Callset._construct_sample_to_pyrange_map(joint_callset_pr, frozenset(joint_sample_list))
 
         return cls(sample_to_pyrange_map, joint_callset_pr, interval_collection)
