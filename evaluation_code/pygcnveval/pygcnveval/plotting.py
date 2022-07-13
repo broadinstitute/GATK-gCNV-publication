@@ -35,13 +35,13 @@ def plot_and_save_per_event_evaluation_results(evaluation_result_list: List[PerE
     for index, evaluation_result in enumerate(evaluation_result_list):
         tp = evaluation_result.precision_size_to_tp
         fp = evaluation_result.precision_size_to_fp
-        print(tp)
-        print(fp)
+        print("Number of true positives for events of the following bin sizes (precision calculation): {0}".format(tp))
+        print("Number of false positives for events of the following bin sizes (precision calculation): {0}".format(fp))
         precisions_for_bins.append([sum_over_dict(tp, i, bins) / max(1., (sum_over_dict(tp, i, bins)+sum_over_dict(fp, i, bins))) for i in bins])
         tp = evaluation_result.recall_size_to_tp
         fn = evaluation_result.recall_size_to_fn
-        print(tp)
-        print(fn)
+        print("Number of true positives for events of the following bin sizes (recall calculation): {0}".format(tp))
+        print("Number of false negatives for events of the following bin sizes (recall calculation): {0}".format(fn))
         recall_for_bins.append([sum_over_dict(tp, i, bins) / max(1., (sum_over_dict(tp, i, bins) + sum_over_dict(fn, i, bins))) for i in bins])
         f_1_for_bins.append([2 / ((1. / recall_for_bins[index][i]) + (1. / precisions_for_bins[index][i])) for i in bins])
 
