@@ -259,6 +259,9 @@ class Callset(ABC):
                         sample_to_events_list_map[sample].append(event)
 
         for sample in sample_set:
+            if not sample_to_events_list_map[sample]:
+                sample_to_pyrange_map[sample] = pr.PyRanges()
+                continue
             events_df = pd.DataFrame(sample_to_events_list_map[sample])
             events_df = events_df.astype(Callset.CALLSET_COLUMN_TYPES)
             sample_to_pyrange_map[sample] = pr.PyRanges(events_df)
@@ -355,7 +358,7 @@ class GCNVCallset(Callset):
     @classmethod
     def read_in_callset(cls, gcnv_segment_vcfs: List[str], gcnv_callset_tsv: Optional[str], gcnv_joint_vcf: Optional[str],
                         interval_collection: IntervalCollection, max_events_allowed: int = 100,
-                        sq_min_del: int =100, sq_min_dup: int = 50):
+                        sq_min_del: int = 100, sq_min_dup: int = 50):
 
         sample_to_pyrange_map = {}
 
@@ -412,7 +415,7 @@ class GCNVCallset(Callset):
 
                 events_df = pd.DataFrame(events_df_lists, columns=Callset.CALLSET_COLUMNS)
                 if len(events_df) > max_events_allowed:
-                   continue
+                    continue
                 events_pr = pr.PyRanges(events_df)
                 sample_to_pyrange_map[sample_name] = events_pr
 
@@ -448,45 +451,54 @@ class GCNVCallset(Callset):
                     number_overlaps = sum(sample_to_length_map[s] / length > 0.5 for s in sample_set)
                     af = number_overlaps / num_samples
                     event_frequencies.append(af)
-                    #print(sample_to_pyrange_map[sample].Frequency[index])
                 sample_to_pyrange_map[sample].Frequency = pd.Series(event_frequencies)
             print("Done calculating AF")
 
         # Read in joint vcf
         joint_callset_pr = None
         if gcnv_joint_vcf is not None:
+            sample_to_pyrange_map = {}
             joint_vcf_reader = vcf.Reader(open(gcnv_joint_vcf, 'r'))
             joint_sample_list = list(joint_vcf_reader.samples)
+            sample_to_event_list = {s: [] for s in joint_sample_list}
             events_list = []
             for record in joint_vcf_reader:
-                if not record.FILTER:
+                if record.FILTER:
                     continue
-                del_call_samples = []
-                dup_call_samples = []
                 if record.ALT[0] is None:
                     continue
+                del_call_sample_to_qual = {}
+                dup_call_samples_to_qual = {}
                 for sample in joint_sample_list:
                     # TODO this does not work properly for allosomal contigs but we ignore them for now
                     if record.genotype(sample)['CN']:  # check that there is a value stored in the field
                         if record.genotype(sample)['CN'] < 2:
                             if record.genotype(sample)['QS'] >= sq_min_del:
-                                del_call_samples.append(sample)
+                                del_call_sample_to_qual[sample] = record.genotype(sample)['QS']
                         elif record.genotype(sample)['CN'] > 2:
                             if record.genotype(sample)['QS'] >= sq_min_dup:
-                                dup_call_samples.append(sample)
+                                dup_call_samples_to_qual[sample] = record.genotype(sample)['QS']
                 chrom, start, end, num_bins = record.CHROM, int(record.POS), int(record.INFO['END']), int(
                     record.genotype(joint_sample_list[0])['NP'])
                 name_prefix = str(chrom) + "_" + str(start) + "_" + str(end) + "_"
-                af = (len(del_call_samples) + len(dup_call_samples)) / len(joint_sample_list)
-                if del_call_samples:
-                    events_list.append([chrom, start, end, name_prefix + "DEL", EventType.DEL, frozenset(del_call_samples), af, num_bins])
-                if dup_call_samples:
-                    events_list.append([chrom, start, end, name_prefix + "DUP", EventType.DUP, frozenset(dup_call_samples), af, num_bins])
+                af = (len(del_call_sample_to_qual) + len(dup_call_samples_to_qual)) / len(joint_sample_list)
+                if del_call_sample_to_qual:
+                    for s, q in del_call_sample_to_qual.items():
+                        sample_to_event_list[s].append([chrom, start, end, EventType.DEL, num_bins, q, af])
+                    events_list.append([chrom, start, end, name_prefix + "DEL", EventType.DEL, frozenset(del_call_sample_to_qual.keys()), af, num_bins])
+                if dup_call_samples_to_qual:
+                    for s, q in dup_call_samples_to_qual.items():
+                        sample_to_event_list[s].append([chrom, start, end, EventType.DUP, num_bins, q, af])
+                    events_list.append([chrom, start, end, name_prefix + "DUP", EventType.DUP, frozenset(dup_call_samples_to_qual.keys()), af, num_bins])
             joint_events_df = pd.DataFrame(events_list, columns=Callset.JOINT_CALLSET_COLUMNS)
             joint_events_df.astype(Callset.JOINT_CALLSET_COLUMN_TYPES)
             joint_callset_pr = pr.PyRanges(joint_events_df)
-
-            sample_to_pyrange_map = Callset._construct_sample_to_pyrange_map(joint_callset_pr, frozenset(joint_sample_list))
+            for s in joint_sample_list:
+                if len(sample_to_event_list[s]) > max_events_allowed:
+                    continue
+                    # TODO remove these samples from the joint callset as well
+                events_df = pd.DataFrame(sample_to_event_list[s], columns=Callset.CALLSET_COLUMNS)
+                sample_to_pyrange_map[s] = pr.PyRanges(events_df)
 
         return cls(sample_to_pyrange_map, joint_callset_pr, interval_collection)
 

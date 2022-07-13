@@ -3,7 +3,7 @@ from typing import List
 
 from callset import TruthCallset, GCNVCallset, XHMMCallset
 from interval_collection import IntervalCollection
-from evaluator import PerEventEvaluator, PerBinEvaluator, PerSiteEvaluator
+from evaluator import PerEventEvaluator, PerSiteEvaluator
 import plotting
 
 
@@ -18,12 +18,14 @@ def evaluate_cnv_callsets_and_plot_results(analyzed_intervals: str,
                                            minimum_overlap: float,
                                            gcnv_sq_min_del: int,
                                            gcnv_sq_min_dup: int,
+                                           site_frequency_threshold: float,
                                            samples_to_evaluate_path: str):
     perform_per_site_eval = False
 
     print("Reading in interval list...", flush=True)
     interval_collection = IntervalCollection.read_interval_list(analyzed_intervals)
     callsets_to_evaluate = []
+    gcnv_callset = None
     if gcnv_vcfs or gcnv_callset_tsv or gcnv_joint_vcf:
         print("Reading in gCNV callset...", flush=True)
         gcnv_callset = GCNVCallset.read_in_callset(gcnv_segment_vcfs=gcnv_vcfs,
@@ -37,9 +39,10 @@ def evaluate_cnv_callsets_and_plot_results(analyzed_intervals: str,
 
     if xhmm_vcfs:
         print("Reading in XHMM callset", flush=True)
+        samples_to_keep = None if gcnv_callset else gcnv_callset.sample_set
         xhmm_callset = XHMMCallset.read_in_callset(xhmm_vcfs=xhmm_vcfs,
                                                    interval_collection=interval_collection,
-                                                   samples_to_keep=gcnv_callset.sample_set)
+                                                   samples_to_keep=samples_to_keep)
         callsets_to_evaluate.append(xhmm_callset)
 
     if samples_to_evaluate_path:
@@ -78,7 +81,8 @@ def evaluate_cnv_callsets_and_plot_results(analyzed_intervals: str,
               (len(per_event_evaluator.sample_list_to_eval), len(callset.sample_set)))
         per_event_evaluation_result = per_event_evaluator.evaluate_callset_against_the_truth(minimum_overlap=minimum_overlap,
                                                                                              gcnv_sq_min_del=gcnv_sq_min_del,
-                                                                                             gcnv_sq_min_dup=gcnv_sq_min_dup)
+                                                                                             gcnv_sq_min_dup=gcnv_sq_min_dup,
+                                                                                             site_frequency_threshold=site_frequency_threshold)
         per_event_evaluation_results.append(per_event_evaluation_result)
 
         per_event_evaluation_result.write_to_file(output_directory)
@@ -125,6 +129,9 @@ def main():
     parser.add_argument('--gcnv_min_sq_dup_threshold', metavar='MinimumSQDelThreshold', type=int,
                         help='SQ threshold to filter gCNV duplication events on', required=True)
 
+    parser.add_argument('--site_frequency_threshold', metavar='SiteFrequencyThreshold', type=float,
+                        help='Site frequency threshold for filtering variant sites', required=True)
+
     parser.add_argument('--samples_to_evaluate_path', metavar='SamplesToEvaluate', type=str,
                         help='A file containing the set of samples to evaluate, one sample per line.',
                         required=False)
@@ -141,14 +148,15 @@ def main():
     min_required_overlap = args.min_required_overlap
     gcnv_sq_min_del = args.gcnv_min_sq_del_threshold
     gcnv_sq_min_dup = args.gcnv_min_sq_dup_threshold
+    site_frequency_threshold = args.site_frequency_threshold
     samples_to_evaluate_path = args.samples_to_evaluate_path
 
     assert (gcnv_segment_vcfs is None) ^ (gcnv_callset_tsv is None) ^ (gcnv_segment_vcfs is None), \
         "Exactly one of the gCNV segment VCF list or gCNV TSV callset or joint gCNV VCF must be defined"
 
-    evaluate_cnv_callsets_and_plot_results(analyzed_intervals, truth_callset, gcnv_segment_vcfs, gcnv_callset_tsv, gcnv_max_event_number,
-                                           gcnv_joint_vcf, xhmm_vcfs, output_dir, min_required_overlap,
-                                           gcnv_sq_min_del, gcnv_sq_min_dup, samples_to_evaluate_path)
+    evaluate_cnv_callsets_and_plot_results(analyzed_intervals, truth_callset, gcnv_segment_vcfs, gcnv_callset_tsv,
+                                           gcnv_max_event_number, gcnv_joint_vcf, xhmm_vcfs, output_dir, min_required_overlap,
+                                           gcnv_sq_min_del, gcnv_sq_min_dup, site_frequency_threshold, samples_to_evaluate_path)
 
 
 if __name__ == '__main__':
